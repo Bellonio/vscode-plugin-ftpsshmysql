@@ -1,0 +1,598 @@
+{
+  "name": "webspace-manager",
+  "displayName": "WebSpace Manager",
+  "description": "Spazi web via SSH/SFTP e FTP, terminale, MySQL e telemetria, con credenziali cifrate.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "UNLICENSED",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": ["onFileSystem:wsm"],
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node esbuild.mjs --test && node --test \"out/test/*.test.js\"",
+    "package": "npm run typecheck && node esbuild.mjs --production && vsce package --no-dependencies --skip-license --allow-missing-repository"
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "wsm",
+          "title": "WebSpace",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "wsm": [
+        {
+          "id": "wsm.spaces",
+          "name": "Spazi"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "wsm.spaces",
+        "contents": "Nessuno spazio configurato.\n[Aggiungi spazio](command:wsm.addSpace)\n[Importa spazi](command:wsm.import)"
+      }
+    ],
+    "configuration": {
+      "title": "WebSpace Manager",
+      "properties": {
+        "wsm.sortMode": {
+          "type": "string",
+          "enum": [
+            "alpha",
+            "manual"
+          ],
+          "default": "alpha",
+          "description": "Ordinamento degli spazi: alfabetico o manuale."
+        },
+        "wsm.telemetry.interval": {
+          "type": "number",
+          "default": 10,
+          "minimum": 5,
+          "description": "Secondi tra un campionamento e l'altro della telemetria (minimo 5)."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "wsm.addSpace",
+        "title": "Aggiungi spazio",
+        "category": "WSM",
+        "icon": "$(add)"
+      },
+      {
+        "command": "wsm.editSpace",
+        "title": "Modifica spazio",
+        "category": "WSM",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "wsm.deleteSpace",
+        "title": "Elimina spazio",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.disconnect",
+        "title": "Disconnetti",
+        "category": "WSM",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "wsm.refresh",
+        "title": "Aggiorna",
+        "category": "WSM",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "wsm.sortAlpha",
+        "title": "Ordinamento: passa ad alfabetico",
+        "category": "WSM",
+        "icon": "$(list-ordered)"
+      },
+      {
+        "command": "wsm.sortManual",
+        "title": "Ordinamento: passa a manuale",
+        "category": "WSM",
+        "icon": "$(case-sensitive)"
+      },
+      {
+        "command": "wsm.moveUp",
+        "title": "Sposta su",
+        "category": "WSM",
+        "icon": "$(arrow-up)"
+      },
+      {
+        "command": "wsm.moveDown",
+        "title": "Sposta giù",
+        "category": "WSM",
+        "icon": "$(arrow-down)"
+      },
+      {
+        "command": "wsm.moveTop",
+        "title": "Sposta in cima",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.moveBottom",
+        "title": "Sposta in fondo",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.pin",
+        "title": "Fissa in cima",
+        "category": "WSM",
+        "icon": "$(pin)"
+      },
+      {
+        "command": "wsm.unpin",
+        "title": "Sblocca da cima",
+        "category": "WSM",
+        "icon": "$(pinned)"
+      },
+      {
+        "command": "wsm.search",
+        "title": "Cerca spazi e file caricati",
+        "category": "WSM",
+        "icon": "$(search)"
+      },
+      {
+        "command": "wsm.export",
+        "title": "Esporta spazi (cifrato)",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.import",
+        "title": "Importa spazi",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.changeMasterPassword",
+        "title": "Cambia superpassword",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.resetVault",
+        "title": "Reset vault (cancella tutte le credenziali)",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.refreshNode",
+        "title": "Aggiorna cartella",
+        "category": "WSM",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "wsm.newFile",
+        "title": "Nuovo file",
+        "category": "WSM",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "wsm.newFolder",
+        "title": "Nuova cartella",
+        "category": "WSM",
+        "icon": "$(new-folder)"
+      },
+      {
+        "command": "wsm.rename",
+        "title": "Rinomina",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.delete",
+        "title": "Elimina",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.uploadFiles",
+        "title": "Carica file...",
+        "category": "WSM",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "wsm.uploadFolder",
+        "title": "Carica cartella...",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.download",
+        "title": "Scarica...",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.copyPath",
+        "title": "Copia path remoto",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.terminalHere",
+        "title": "Apri terminale qui",
+        "category": "WSM",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "wsm.openFile",
+        "title": "Apri",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.openTerminal",
+        "title": "Apri terminale SSH",
+        "category": "WSM",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "wsm.openTelemetry",
+        "title": "Apri telemetria",
+        "category": "WSM",
+        "icon": "$(pulse)"
+      },
+      {
+        "command": "wsm.newQuery",
+        "title": "Nuova query SQL",
+        "category": "WSM",
+        "icon": "$(new-file)"
+      },
+      {
+        "command": "wsm.runQuery",
+        "title": "Esegui query",
+        "category": "WSM",
+        "icon": "$(play)"
+      },
+      {
+        "command": "wsm.openTable",
+        "title": "Mostra prime 100 righe",
+        "category": "WSM"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "wsm.editSpace",
+          "when": "false"
+        },
+        {
+          "command": "wsm.deleteSpace",
+          "when": "false"
+        },
+        {
+          "command": "wsm.disconnect",
+          "when": "false"
+        },
+        {
+          "command": "wsm.moveUp",
+          "when": "false"
+        },
+        {
+          "command": "wsm.moveDown",
+          "when": "false"
+        },
+        {
+          "command": "wsm.moveTop",
+          "when": "false"
+        },
+        {
+          "command": "wsm.moveBottom",
+          "when": "false"
+        },
+        {
+          "command": "wsm.pin",
+          "when": "false"
+        },
+        {
+          "command": "wsm.unpin",
+          "when": "false"
+        },
+        {
+          "command": "wsm.refreshNode",
+          "when": "false"
+        },
+        {
+          "command": "wsm.newFile",
+          "when": "false"
+        },
+        {
+          "command": "wsm.newFolder",
+          "when": "false"
+        },
+        {
+          "command": "wsm.rename",
+          "when": "false"
+        },
+        {
+          "command": "wsm.delete",
+          "when": "false"
+        },
+        {
+          "command": "wsm.uploadFiles",
+          "when": "false"
+        },
+        {
+          "command": "wsm.uploadFolder",
+          "when": "false"
+        },
+        {
+          "command": "wsm.download",
+          "when": "false"
+        },
+        {
+          "command": "wsm.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "wsm.terminalHere",
+          "when": "false"
+        },
+        {
+          "command": "wsm.openFile",
+          "when": "false"
+        },
+        {
+          "command": "wsm.openTerminal",
+          "when": "false"
+        },
+        {
+          "command": "wsm.openTelemetry",
+          "when": "false"
+        },
+        {
+          "command": "wsm.newQuery",
+          "when": "false"
+        },
+        {
+          "command": "wsm.openTable",
+          "when": "false"
+        },
+        {
+          "command": "wsm.runQuery",
+          "when": "editorLangId == sql"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "wsm.search",
+          "when": "view == wsm.spaces",
+          "group": "navigation@1"
+        },
+        {
+          "command": "wsm.addSpace",
+          "when": "view == wsm.spaces",
+          "group": "navigation@2"
+        },
+        {
+          "command": "wsm.sortManual",
+          "when": "view == wsm.spaces && !wsm.manualSort",
+          "group": "navigation@3"
+        },
+        {
+          "command": "wsm.sortAlpha",
+          "when": "view == wsm.spaces && wsm.manualSort",
+          "group": "navigation@3"
+        },
+        {
+          "command": "wsm.refresh",
+          "when": "view == wsm.spaces",
+          "group": "navigation@4"
+        },
+        {
+          "command": "wsm.export",
+          "when": "view == wsm.spaces",
+          "group": "2_vault@1"
+        },
+        {
+          "command": "wsm.import",
+          "when": "view == wsm.spaces",
+          "group": "2_vault@2"
+        },
+        {
+          "command": "wsm.changeMasterPassword",
+          "when": "view == wsm.spaces",
+          "group": "2_vault@3"
+        },
+        {
+          "command": "wsm.resetVault",
+          "when": "view == wsm.spaces",
+          "group": "2_vault@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "wsm.moveUp",
+          "when": "view == wsm.spaces && wsm.manualSort && viewItem =~ /^space/",
+          "group": "inline@1"
+        },
+        {
+          "command": "wsm.moveDown",
+          "when": "view == wsm.spaces && wsm.manualSort && viewItem =~ /^space/",
+          "group": "inline@2"
+        },
+        {
+          "command": "wsm.disconnect",
+          "when": "view == wsm.spaces && viewItem =~ /^space.*connected/",
+          "group": "inline@3"
+        },
+        {
+          "command": "wsm.editSpace",
+          "when": "view == wsm.spaces && viewItem =~ /^space/",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "wsm.disconnect",
+          "when": "view == wsm.spaces && viewItem =~ /^space.*connected/",
+          "group": "1_edit@2"
+        },
+        {
+          "command": "wsm.pin",
+          "when": "view == wsm.spaces && viewItem =~ /^space(?!.*pinned)/",
+          "group": "2_order@1"
+        },
+        {
+          "command": "wsm.unpin",
+          "when": "view == wsm.spaces && viewItem =~ /^space.*pinned/",
+          "group": "2_order@1"
+        },
+        {
+          "command": "wsm.moveTop",
+          "when": "view == wsm.spaces && wsm.manualSort && viewItem =~ /^space/",
+          "group": "2_order@2"
+        },
+        {
+          "command": "wsm.moveBottom",
+          "when": "view == wsm.spaces && wsm.manualSort && viewItem =~ /^space/",
+          "group": "2_order@3"
+        },
+        {
+          "command": "wsm.deleteSpace",
+          "when": "view == wsm.spaces && viewItem =~ /^space/",
+          "group": "9_danger@1"
+        },
+        {
+          "command": "wsm.uploadFiles",
+          "when": "view == wsm.spaces && viewItem =~ /^(filesRoot|folder):/",
+          "group": "inline@1"
+        },
+        {
+          "command": "wsm.refreshNode",
+          "when": "view == wsm.spaces && viewItem =~ /^(filesRoot|folder):/",
+          "group": "inline@2"
+        },
+        {
+          "command": "wsm.newFile",
+          "when": "view == wsm.spaces && viewItem =~ /^(filesRoot|folder):/",
+          "group": "1_new@1"
+        },
+        {
+          "command": "wsm.newFolder",
+          "when": "view == wsm.spaces && viewItem =~ /^(filesRoot|folder):/",
+          "group": "1_new@2"
+        },
+        {
+          "command": "wsm.uploadFiles",
+          "when": "view == wsm.spaces && viewItem =~ /^(filesRoot|folder):/",
+          "group": "2_transfer@1"
+        },
+        {
+          "command": "wsm.uploadFolder",
+          "when": "view == wsm.spaces && viewItem =~ /^(filesRoot|folder):/",
+          "group": "2_transfer@2"
+        },
+        {
+          "command": "wsm.download",
+          "when": "view == wsm.spaces && viewItem =~ /^(folder|file):/",
+          "group": "2_transfer@3"
+        },
+        {
+          "command": "wsm.terminalHere",
+          "when": "view == wsm.spaces && viewItem =~ /^(filesRoot|folder):sftp/",
+          "group": "3_misc@1"
+        },
+        {
+          "command": "wsm.copyPath",
+          "when": "view == wsm.spaces && viewItem =~ /^(filesRoot|folder|file):/",
+          "group": "3_misc@2"
+        },
+        {
+          "command": "wsm.refreshNode",
+          "when": "view == wsm.spaces && viewItem =~ /^(filesRoot|folder):/",
+          "group": "3_misc@3"
+        },
+        {
+          "command": "wsm.rename",
+          "when": "view == wsm.spaces && viewItem =~ /^(folder|file):/",
+          "group": "4_edit@1"
+        },
+        {
+          "command": "wsm.delete",
+          "when": "view == wsm.spaces && viewItem =~ /^(folder|file):/",
+          "group": "4_edit@2"
+        },
+        {
+          "command": "wsm.newQuery",
+          "when": "view == wsm.spaces && viewItem =~ /^(db|database)$/",
+          "group": "inline@1"
+        },
+        {
+          "command": "wsm.newQuery",
+          "when": "view == wsm.spaces && viewItem =~ /^(db|database)$/",
+          "group": "1_sql@1"
+        },
+        {
+          "command": "wsm.refreshNode",
+          "when": "view == wsm.spaces && viewItem =~ /^(db|database)$/",
+          "group": "1_sql@2"
+        },
+        {
+          "command": "wsm.openTable",
+          "when": "view == wsm.spaces && viewItem == table",
+          "group": "1_sql@1"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "wsm.runQuery",
+          "when": "editorLangId == sql",
+          "group": "navigation"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "wsm.moveUp",
+        "key": "alt+up",
+        "when": "focusedView == wsm.spaces && wsm.manualSort"
+      },
+      {
+        "command": "wsm.moveDown",
+        "key": "alt+down",
+        "when": "focusedView == wsm.spaces && wsm.manualSort"
+      },
+      {
+        "command": "wsm.rename",
+        "key": "f2",
+        "when": "focusedView == wsm.spaces"
+      },
+      {
+        "command": "wsm.delete",
+        "key": "delete",
+        "when": "focusedView == wsm.spaces"
+      },
+      {
+        "command": "wsm.search",
+        "key": "ctrl+alt+f",
+        "mac": "cmd+alt+f",
+        "when": "focusedView == wsm.spaces"
+      },
+      {
+        "command": "wsm.runQuery",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && editorLangId == sql"
+      }
+    ]
+  },
+  "dependencies": {
+    "basic-ftp": "^6.2.3",
+    "mysql2": "^3.11.0",
+    "ssh2": "^1.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ssh2": "^1.15.0",
+    "@types/vscode": "~1.85.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
+  }
+}
