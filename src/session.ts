@@ -160,11 +160,13 @@ export class Sessions implements vscode.Disposable {
 	readonly onDidChange = this.changed.event;
 
 	constructor(private store: Store, private vault: Vault, private state: vscode.Memento) {
-		// Keep live sessions in sync with edited configs; drop sessions of deleted spaces.
+		// Keep live sessions in sync with cosmetic changes (pin, order, name); drop sessions of deleted spaces and of spaces
+		// whose connection config or credentials changed (e.g. import "overwrite"): old secrets must never reach a new host.
 		store.onDidChange(() => {
 			for (const [id, s] of this.map) {
 				const space = store.get(id);
-				if (!space) this.close(id);
+				if (!space || space.secrets !== s.space.secrets ||
+					JSON.stringify([space.files, space.mysql]) !== JSON.stringify([s.space.files, s.space.mysql])) this.close(id);
 				else s.space = space;
 			}
 		});

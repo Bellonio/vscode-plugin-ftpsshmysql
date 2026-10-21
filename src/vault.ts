@@ -76,9 +76,10 @@ export class Vault {
 		try {
 			file = JSON.parse(Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8'));
 			const v = file.vault;
-			// KDF parameters are bounded: a crafted file must not make scrypt allocate gigabytes.
+			// KDF parameters are bounded: a crafted file must not make scrypt allocate gigabytes (it uses 128*N*r bytes, max 512 MB).
 			if (file.format !== EXPORT_FORMAT || !Array.isArray(file.spaces) || typeof v?.salt !== 'string' || typeof v.verifier !== 'string' ||
-				!(v.N >= 2 ** 14 && v.N <= 2 ** 20) || !(v.r >= 1 && v.r <= 16) || !(v.p >= 1 && v.p <= 4)) throw new Error();
+				!(v.N >= 2 ** 14 && v.N <= 2 ** 20) || !(v.r >= 1 && v.r <= 16) || !(v.p >= 1 && v.p <= 4) ||
+				128 * v.N * v.r > 512 * 1024 * 1024) throw new Error();
 			if (!file.spaces.every(validSpace)) throw new Error();
 		} catch {
 			return void vscode.window.showErrorMessage('File non valido: non è un export di WebSpace Manager.');

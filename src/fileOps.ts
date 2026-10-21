@@ -131,10 +131,13 @@ export class FileOps {
 		for (const p of localPaths) await walk(p, posix.join(target, basename(p)));
 
 		// One listing per target folder instead of a stat per file (FTP has no stat: each one would be a LIST).
+		// The listing must succeed: without it we can't tell an overwrite from a new file, so the upload stops.
 		const names = new Map<string, Promise<Set<string>>>();
 		const existsRemote = (path: string) => {
 			const dir = posix.dirname(path);
-			if (!names.has(dir)) names.set(dir, c.fs.list(dir).then(l => new Set(l.map(e => e.name)), () => new Set<string>()));
+			if (!names.has(dir)) names.set(dir, c.fs.list(dir).then(l => new Set(l.map(e => e.name)), (e: any) => {
+				throw new Error(`Impossibile leggere ${dir} per controllare i file esistenti: ${e?.message ?? e}. Upload interrotto.`);
+			}));
 			return names.get(dir)!.then(set => set.has(posix.basename(path)));
 		};
 		let policy: 'ask' | 'overwrite' | 'skip' = 'ask';
@@ -179,14 +182,17 @@ export class FileOps {
 		const [destDir] = (await vscode.window.showOpenDialog({ canSelectFolders: true, canSelectFiles: false, openLabel: 'Scarica qui' })) ?? [];
 		if (!destDir) return;
 		let count = 0, links = 0;
+		const unsafe: string[] = [];
 		await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Scarico ${node.path}`, cancellable: true },
 			async (progress, token) => {
 				const walk = async (remote: string, local: string) => {
 					await lfs.mkdir(local, { recursive: true });
 					for (const e of await c.fs.list(remote)) {
 						if (token.isCancellationRequested) return;
+						// A name with a separator (e.g. "..\x" is a valid file name on Linux) would escape the destination on Windows.
+						if (/[\\/]/.test(e.name)) unsafe.push(e.path);
 						// Links to folders are not followed: they may point back up the tree (infinite loop).
-						if (e.type === 'dir' && e.link) links++;
+						else if (e.type === 'dir' && e.link) links++;
 						else if (e.type === 'dir') await walk(e.path, join(local, e.name));
 						else {
 							progress.report({ message: e.path });
@@ -198,6 +204,10 @@ export class FileOps {
 				await walk(node.path, join(destDir.fsPath, node.entry.name));
 			});
 		vscode.window.showInformationMessage(`Scaricati ${count} file in ${join(destDir.fsPath, node.entry.name)}${links ? ` (ignorati ${links} link a cartelle)` : ''}`);
+		if (unsafe.length) {
+			vscode.window.showWarningMessage(`${unsafe.length} elementi NON scaricati: il nome contiene "/" o "\\" e finirebbe fuori dalla cartella di destinazione.`,
+				{ modal: true, detail: unsafe.slice(0, 20).join('\n') + (unsafe.length > 20 ? `\n... e altri ${unsafe.length - 20}` : '') });
+		}
 	}
 }
 

@@ -10,6 +10,8 @@ import { Entry, NotFoundError, RemoteFs } from './remoteFs';
 export class FtpFs implements RemoteFs {
 	private client = new Client(20000);
 	private queue: Promise<unknown> = Promise.resolve();
+	/** Set after a refused login: every later operation (also the ones already queued) fails without logging in again. */
+	private authError?: Error;
 
 	private constructor(private options: AccessOptions) {}
 
@@ -25,7 +27,7 @@ export class FtpFs implements RemoteFs {
 		} catch (e: any) {
 			this.client.close();
 			// ponytail: 530 = login refused; no automatic retry to avoid bans.
-			if (e?.code === 530) throw new Error('Autenticazione FTP fallita: controlla utente/password. Nessun nuovo tentativo automatico.');
+			if (e?.code === 530) throw (this.authError = new Error('Autenticazione FTP fallita: controlla utente/password. Nessun nuovo tentativo automatico.'));
 			throw e;
 		}
 	}
@@ -38,6 +40,7 @@ export class FtpFs implements RemoteFs {
 
 	private run<T>(op: (c: Client) => Promise<T>): Promise<T> {
 		const next = this.queue.then(async () => {
+			if (this.authError) throw this.authError;
 			if (this.client.closed) await this.reconnect();
 			try {
 				return await op(this.client);
