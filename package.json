@@ -26,7 +26,7 @@
       "activitybar": [
         {
           "id": "wsm",
-          "title": "WebSpace",
+          "title": "Ftp/SSH/MySql Connections",
           "icon": "media/icon.svg"
         }
       ]
