@@ -253,8 +253,9 @@
       },
       {
         "command": "wsm.openTable",
-        "title": "Mostra prime 100 righe",
-        "category": "WSM"
+        "title": "Apri dati",
+        "category": "WSM",
+        "icon": "$(table)"
       },
       {
         "command": "wsm.showCreateTable",
@@ -274,6 +275,32 @@
       {
         "command": "wsm.renameTable",
         "title": "Rinomina tabella...",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.queryTarget",
+        "title": "Scegli database della query",
+        "category": "WSM",
+        "icon": "$(database)"
+      },
+      {
+        "command": "wsm.addIndex",
+        "title": "Aggiungi indice...",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.editColumn",
+        "title": "Modifica colonna...",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.dropColumn",
+        "title": "Elimina colonna...",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.dropIndex",
+        "title": "Elimina indice...",
         "category": "WSM"
       },
       {
@@ -429,6 +456,26 @@
         },
         {
           "command": "wsm.createDatabase",
+          "when": "false"
+        },
+        {
+          "command": "wsm.queryTarget",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "wsm.addIndex",
+          "when": "false"
+        },
+        {
+          "command": "wsm.editColumn",
+          "when": "false"
+        },
+        {
+          "command": "wsm.dropColumn",
+          "when": "false"
+        },
+        {
+          "command": "wsm.dropIndex",
           "when": "false"
         }
       ],
@@ -654,13 +701,43 @@
           "command": "wsm.refreshNode",
           "when": "view == wsm.spaces && viewItem == table",
           "group": "1_sql@3"
+        },
+        {
+          "command": "wsm.openTable",
+          "when": "view == wsm.spaces && viewItem == table",
+          "group": "inline@1"
+        },
+        {
+          "command": "wsm.addIndex",
+          "when": "view == wsm.spaces && viewItem == table",
+          "group": "2_struct@3"
+        },
+        {
+          "command": "wsm.editColumn",
+          "when": "view == wsm.spaces && viewItem == column",
+          "group": "2_struct@1"
+        },
+        {
+          "command": "wsm.dropColumn",
+          "when": "view == wsm.spaces && viewItem == column",
+          "group": "9_danger@1"
+        },
+        {
+          "command": "wsm.dropIndex",
+          "when": "view == wsm.spaces && viewItem == index",
+          "group": "9_danger@1"
         }
       ],
       "editor/title": [
         {
+          "command": "wsm.queryTarget",
+          "when": "editorLangId == sql",
+          "group": "navigation@1"
+        },
+        {
           "command": "wsm.runQuery",
           "when": "editorLangId == sql",
-          "group": "navigation"
+          "group": "navigation@2"
         }
       ]
     },

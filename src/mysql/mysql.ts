@@ -1,6 +1,7 @@
 import type { Client } from 'ssh2';
 import { Connection, createConnection, FieldPacket } from 'mysql2/promise';
 import { MysqlConfig } from '../spaces';
+import { RowSource } from './sqlgen';
 
 /** Direct connection, or through an SSH channel (forwardOut) without opening any local port. */
 export async function connectMysql(cfg: MysqlConfig, password: string, ssh?: Client): Promise<Connection> {
@@ -26,6 +27,8 @@ export interface ResultSet {
 	rows: unknown[][];
 	/** For statements without a result set (INSERT/UPDATE/...). */
 	info?: string;
+	/** Set when every column is a plain column of one table: rows can then be edited/duplicated/deleted. */
+	source?: RowSource;
 }
 
 /** Runs one or more statements and normalizes the mysql2 output into a list of result sets. */
@@ -38,8 +41,15 @@ export async function runSql(conn: Connection, sql: string, database?: string): 
 		? (res as unknown[]).map((r, i) => [r, (fields as unknown as (FieldPacket[] | undefined)[])[i]])
 		: [[res, fields]];
 	return parts.map(([r, f]) => f && Array.isArray(r)
-		? { columns: f.map(c => c.name), rows: r as unknown[][] }
+		? { columns: f.map(c => c.name), rows: r as unknown[][], source: rowSource(f) }
 		: { columns: [], rows: [], info: describeHeader(r) });
+}
+
+function rowSource(f: FieldPacket[]): RowSource | undefined {
+	const db = f[0]?.db ?? f[0]?.schema, table = f[0]?.orgTable;
+	if (!db || !table || f.some(c => !c.orgName || c.orgTable !== table || (c.db ?? c.schema) !== db)) return undefined;
+	const columns = f.map(c => c.orgName);
+	return new Set(columns).size === columns.length ? { db, table, columns } : undefined;
 }
 
 function describeHeader(r: any): string {

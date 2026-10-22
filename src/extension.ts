@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { FileOps } from './fileOps';
-import { dangerous, newQuery, openTable, runQuery, showCreateTable, sqlTemplate } from './mysql/results';
+import { chooseTarget, dangerous, editColumn, newQuery, openTable, queryStatusBar, runQuery, showCreateTable, sqlTemplate } from './mysql/results';
 import { WsmFileSystem } from './remote/fsProvider';
 import { Snapshots } from './remote/snapshots';
 import { search } from './search';
@@ -126,11 +126,17 @@ export function activate(context: vscode.ExtensionContext) {
 
 		cmd('wsm.newQuery', n => newQuery(n)),
 		run('wsm.runQuery', () => runQuery(store, sessions)),
+		run('wsm.queryTarget', () => chooseTarget(store, sessions)),
+		...queryStatusBar(store),
 		cmd('wsm.openTable', n => openTable(store, sessions, n)),
 		cmd('wsm.showCreateTable', n => showCreateTable(sessions, n)),
 		cmd('wsm.newTable', n => sqlTemplate(n, 'newTable')),
 		cmd('wsm.addColumn', n => sqlTemplate(n, 'addColumn')),
 		cmd('wsm.renameTable', n => sqlTemplate(n, 'renameTable')),
+		cmd('wsm.addIndex', n => sqlTemplate(n, 'addIndex')),
+		cmd('wsm.editColumn', n => editColumn(sessions, n)),
+		cmd('wsm.dropColumn', n => sqlTemplate(n, 'dropColumn')),
+		cmd('wsm.dropIndex', n => sqlTemplate(n, 'dropIndex')),
 		cmd('wsm.truncateTable', n => dangerous(store, sessions, n, 'truncateTable')),
 		cmd('wsm.dropTable', async n => { if (await dangerous(store, sessions, n, 'dropTable')) tree.refresh(tree.getParent(n)); }),
 		cmd('wsm.dropDatabase', async n => { if (await dangerous(store, sessions, n, 'dropDatabase')) tree.refresh(tree.getParent(n)); }),

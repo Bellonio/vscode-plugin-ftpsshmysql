@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ident, riskyStatements, toCsv, toJson } from '../src/mysql/sqlgen';
+import { columnDefinition, ident, isReadOnly, literal, riskyStatements, rowSql, toCsv, toJson } from '../src/mysql/sqlgen';
 
 test('ident escapes backticks', () => {
 	assert.equal(ident('a`b'), '`a``b`');
@@ -16,10 +16,38 @@ test('riskyStatements flags destructive statements only', () => {
 	assert.deepEqual(riskyStatements("INSERT INTO t VALUES ('it\\'s; drop table x')"), []);
 });
 
+test('isReadOnly accepts only reading statements', () => {
+	assert.equal(isReadOnly('SELECT 1; show tables; -- x'), true);
+	assert.equal(isReadOnly("SELECT 'delete'; UPDATE t SET a = 1 WHERE id = 1"), false);
+	assert.equal(isReadOnly('WITH x AS (SELECT 1) DELETE FROM t'), false);
+	assert.equal(isReadOnly(''), false);
+});
+
 test('toCsv quotes when needed, NULL is empty', () => {
 	assert.equal(toCsv(['a', 'b'], [['x,y', null], ['say "hi"', 3]]), 'a,b\r\n"x,y",\r\n"say ""hi""",3\r\n');
 });
 
 test('toJson keys rows by column, binary as base64', () => {
 	assert.deepEqual(JSON.parse(toJson(['id', 'bin'], [[1, Buffer.from('hi')]])), [{ id: 1, bin: 'aGk=' }]);
+});
+
+test('literal escapes strings, keeps numbers, hex for binary', () => {
+	assert.equal(literal(null), 'NULL');
+	assert.equal(literal(5), '5');
+	assert.equal(literal("it's \\ ok\n"), "'it\\'s \\\\ ok\\n'");
+	assert.equal(literal(Buffer.from([1, 255])), "X'01ff'");
+});
+
+test('rowSql uses the primary key, falls back to all columns', () => {
+	const src = { db: 'd', table: 't', columns: ['id', 'name', 'note'] };
+	assert.equal(rowSql('update', src, [7, 'a', null], ['id']), "UPDATE `d`.`t` SET\n\t`name` = 'a',\n\t`note` = NULL\nWHERE `id` = 7\nLIMIT 1;\n");
+	assert.equal(rowSql('delete', src, [7, 'a', null], []),
+		"-- Attenzione: chiave primaria assente nel risultato, la riga è identificata da tutte le colonne\nDELETE FROM `d`.`t`\nWHERE `id` = 7\n\tAND `name` = 'a'\n\tAND `note` IS NULL\nLIMIT 1;\n");
+	assert.equal(rowSql('insert', src, [7, 'a', null], ['id']), "INSERT INTO `d`.`t` (`name`, `note`)\nVALUES (\n\t'a',\n\tNULL\n);\n");
+});
+
+test('columnDefinition extracts a column line from SHOW CREATE TABLE', () => {
+	const create = "CREATE TABLE `t` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `name` varchar(50) NOT NULL DEFAULT '',\n  PRIMARY KEY (`id`)\n)";
+	assert.equal(columnDefinition(create, 'name'), "varchar(50) NOT NULL DEFAULT ''");
+	assert.equal(columnDefinition(create, 'missing'), undefined);
 });
