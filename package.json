@@ -255,6 +255,46 @@
         "command": "wsm.openTable",
         "title": "Mostra prime 100 righe",
         "category": "WSM"
+      },
+      {
+        "command": "wsm.showCreateTable",
+        "title": "Mostra CREATE TABLE",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.newTable",
+        "title": "Nuova tabella...",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.addColumn",
+        "title": "Aggiungi colonna...",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.renameTable",
+        "title": "Rinomina tabella...",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.truncateTable",
+        "title": "Svuota tabella...",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.dropTable",
+        "title": "Elimina tabella...",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.dropDatabase",
+        "title": "Elimina database...",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.createDatabase",
+        "title": "Crea database...",
+        "category": "WSM"
       }
     ],
     "menus": {
@@ -358,6 +398,38 @@
         {
           "command": "wsm.runQuery",
           "when": "editorLangId == sql"
+        },
+        {
+          "command": "wsm.showCreateTable",
+          "when": "false"
+        },
+        {
+          "command": "wsm.newTable",
+          "when": "false"
+        },
+        {
+          "command": "wsm.addColumn",
+          "when": "false"
+        },
+        {
+          "command": "wsm.renameTable",
+          "when": "false"
+        },
+        {
+          "command": "wsm.truncateTable",
+          "when": "false"
+        },
+        {
+          "command": "wsm.dropTable",
+          "when": "false"
+        },
+        {
+          "command": "wsm.dropDatabase",
+          "when": "false"
+        },
+        {
+          "command": "wsm.createDatabase",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -537,6 +609,51 @@
           "command": "wsm.openTable",
           "when": "view == wsm.spaces && viewItem == table",
           "group": "1_sql@1"
+        },
+        {
+          "command": "wsm.createDatabase",
+          "when": "view == wsm.spaces && viewItem == db",
+          "group": "2_struct@1"
+        },
+        {
+          "command": "wsm.newTable",
+          "when": "view == wsm.spaces && viewItem == database",
+          "group": "2_struct@1"
+        },
+        {
+          "command": "wsm.dropDatabase",
+          "when": "view == wsm.spaces && viewItem == database",
+          "group": "9_danger@1"
+        },
+        {
+          "command": "wsm.showCreateTable",
+          "when": "view == wsm.spaces && viewItem == table",
+          "group": "1_sql@2"
+        },
+        {
+          "command": "wsm.addColumn",
+          "when": "view == wsm.spaces && viewItem == table",
+          "group": "2_struct@1"
+        },
+        {
+          "command": "wsm.renameTable",
+          "when": "view == wsm.spaces && viewItem == table",
+          "group": "2_struct@2"
+        },
+        {
+          "command": "wsm.truncateTable",
+          "when": "view == wsm.spaces && viewItem == table",
+          "group": "9_danger@1"
+        },
+        {
+          "command": "wsm.dropTable",
+          "when": "view == wsm.spaces && viewItem == table",
+          "group": "9_danger@2"
+        },
+        {
+          "command": "wsm.refreshNode",
+          "when": "view == wsm.spaces && viewItem == table",
+          "group": "1_sql@3"
         }
       ],
       "editor/title": [

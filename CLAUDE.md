@@ -14,7 +14,7 @@ node esbuild.mjs --test && node --test out/test/crypto.test.js                  
 node esbuild.mjs --test && node --test --test-name-pattern="moveSpace" "out/test/*.test.js"
 npm run package      # typecheck + production build + vsce package -> .vsix
 ```
-Tests only cover the pure modules (`spaces.ts`, `crypto.ts`, `telemetry/collect.ts`). These must not import `vscode`, because the test bundle can't resolve it. Keep any new testable logic in vscode-free modules.
+Tests only cover the pure modules (`spaces.ts`, `crypto.ts`, `telemetry/collect.ts`, `mysql/sqlgen.ts`). These must not import `vscode`, because the test bundle can't resolve it. Keep any new testable logic in vscode-free modules.
 
 ## Architecture
 - **Data**: a `Space` (`spaces.ts`) groups optional `files` (sftp|ftp, rootPath) and `mysql` (optionally `viaSsh`) configs.

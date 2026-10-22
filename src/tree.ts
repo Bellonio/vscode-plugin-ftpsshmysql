@@ -14,6 +14,8 @@ export type Node =
 	| { kind: 'db'; id: string; spaceId: string }
 	| { kind: 'database'; id: string; spaceId: string; database: string }
 	| { kind: 'table'; id: string; spaceId: string; database: string; table: string }
+	/** Column or index of a table (read-only info). */
+	| { kind: 'tableInfo'; id: string; spaceId: string; database: string; table: string; text: string; description: string; tooltip: string; icon: string; contextValue: string }
 	| { kind: 'message'; id: string; spaceId: string; text: string };
 
 export const fileUri = (spaceId: string, path: string) => vscode.Uri.from({ scheme: 'wsm', authority: spaceId, path });
@@ -99,6 +101,7 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 			case 'entry': return this.dirNode(n.spaceId, posix.dirname(n.path));
 			case 'database': return this.nodes.get(`${this.p(n.spaceId)}|db`);
 			case 'table': return this.nodes.get(`${this.p(n.spaceId)}|db|${n.database}`);
+			case 'tableInfo': return this.nodes.get(`${this.p(n.spaceId)}|db|${n.database}|${n.table}`);
 			default: return this.spaceNode(n.spaceId);
 		}
 	}
@@ -170,11 +173,20 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 				return item;
 			}
 			case 'table': {
-				const item = new vscode.TreeItem(n.table, C.None);
+				const item = new vscode.TreeItem(n.table, C.Collapsed);
 				item.id = n.id;
 				item.iconPath = new vscode.ThemeIcon('table');
 				item.contextValue = 'table';
 				item.command = { command: 'wsm.openTable', title: 'Mostra righe', arguments: [n] };
+				return item;
+			}
+			case 'tableInfo': {
+				const item = new vscode.TreeItem(n.text, C.None);
+				item.id = n.id;
+				item.description = n.description;
+				item.tooltip = n.tooltip;
+				item.iconPath = new vscode.ThemeIcon(n.icon);
+				item.contextValue = n.contextValue;
 				return item;
 			}
 			case 'message': {
@@ -216,6 +228,26 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 					const conn = await s.getMysql();
 					const [rows] = await conn.query<any[]>({ sql: `SHOW FULL TABLES FROM ${conn.escapeId(n.database)}`, rowsAsArray: true });
 					return rows.map(r => this.node({ kind: 'table', id: `${this.p(space.id)}|db|${n.database}|${r[0]}`, spaceId: space.id, database: n.database, table: String(r[0]) }));
+				});
+			case 'table':
+				return this.withSession(n, async s => {
+					const conn = await s.getMysql();
+					const from = `FROM ${conn.escapeId(n.table)} FROM ${conn.escapeId(n.database)}`;
+					const [cols] = await conn.query<any[]>(`SHOW FULL COLUMNS ${from}`);
+					const [idx] = await conn.query<any[]>(`SHOW INDEX ${from}`);
+					const info = (key: string, text: string, description: string, tooltip: string, icon: string, contextValue: string) =>
+						this.node({ kind: 'tableInfo', id: `${n.id}|${key}`, spaceId: n.spaceId, database: n.database, table: n.table, text, description, tooltip, icon, contextValue });
+					const indexes = new Map<string, any[]>();
+					for (const r of idx) indexes.set(r.Key_name, [...(indexes.get(r.Key_name) ?? []), r]);
+					return [
+						...cols.map(c => info(`c|${c.Field}`, c.Field,
+							[c.Type, c.Null === 'NO' && 'NOT NULL', c.Key === 'PRI' && 'PK', c.Extra].filter(Boolean).join(' '),
+							[`${c.Field} ${c.Type}`, `Null: ${c.Null}`, c.Default !== null && `Default: ${c.Default}`, c.Collation && `Collation: ${c.Collation}`, c.Comment && `Commento: ${c.Comment}`].filter(Boolean).join('\n'),
+							c.Key === 'PRI' ? 'key' : 'symbol-field', 'column')),
+						...[...indexes].map(([name, parts]) => info(`i|${name}`, name,
+							`(${parts.sort((a, b) => a.Seq_in_index - b.Seq_in_index).map(p => p.Column_name).join(', ')})${Number(parts[0].Non_unique) ? '' : ' UNIQUE'}`,
+							`Indice ${parts[0].Index_type ?? ''}`, 'list-tree', 'index')),
+					];
 				});
 			default:
 				return [];
