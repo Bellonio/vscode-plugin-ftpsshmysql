@@ -61,15 +61,9 @@ export function activate(context: vscode.ExtensionContext) {
 		const s = n.kind === 'space' && store.get(n.spaceId);
 		if (s) await store.upsert({ ...s, pinned });
 	};
-	const setSort = (mode: 'alpha' | 'manual') => async () => {
-		if (mode === 'manual' && sortMode() === 'alpha') {
-			// Start the manual order from what the user currently sees.
-			const shown = await tree.getChildren();
-			const ids = shown.map(n => n.spaceId);
-			await store.saveAll(store.all().map(s => ({ ...s, order: ids.indexOf(s.id) })));
-		}
-		await vscode.workspace.getConfiguration('wsm').update('sortMode', mode, vscode.ConfigurationTarget.Global);
-	};
+	// The manual `order` is kept as is while in alpha mode, so switching back restores it.
+	const setSort = (mode: 'alpha' | 'manual') => () =>
+		vscode.workspace.getConfiguration('wsm').update('sortMode', mode, vscode.ConfigurationTarget.Global);
 
 	context.subscriptions.push(
 		view, sessions,
