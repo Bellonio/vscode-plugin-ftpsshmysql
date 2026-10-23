@@ -1,11 +1,11 @@
 import * as vscode from 'vscode';
 import { Sessions } from '../session';
 import { Store } from '../store';
-import { Node } from '../tree';
+import { Node, SpacesTree } from '../tree';
 import { page } from '../webview/html';
 import type { Connection } from 'mysql2/promise';
 import { ResultSet, runSql } from './mysql';
-import { columnDefinition, GridChanges, gridSql, ident, isReadOnly, riskyStatements, RowSource, rowSql, toCsv, toJson } from './sqlgen';
+import { changesSchema, columnDefinition, GridChanges, gridSql, ident, isReadOnly, riskyStatements, RowSource, rowSql, toCsv, toJson } from './sqlgen';
 
 interface Target { spaceId: string; database?: string }
 /** "Apri dati" state: paged SELECT on one table, with optional WHERE and ORDER BY. */
@@ -146,13 +146,18 @@ export async function confirmRisky(sql: string): Promise<boolean> {
 	return ok === 'Esegui comunque';
 }
 
-export async function runQuery(store: Store, sessions: Sessions) {
+export async function runQuery(store: Store, sessions: Sessions, tree: SpacesTree) {
 	const editor = vscode.window.activeTextEditor;
 	if (!editor) return;
 	const target = docTargets.get(editor.document.uri.toString()) ?? await chooseTarget(store, sessions);
 	if (!target) return;
 	const sql = (editor.selection.isEmpty ? editor.document.getText() : editor.document.getText(editor.selection)).trim();
-	if (sql && await confirmRisky(sql)) await execute(store, sessions, target, sql);
+	if (!sql || !await confirmRisky(sql)) return;
+	await execute(store, sessions, target, sql);
+	// Even after an error: a multi-statement run may have applied part of the DDL. Expanded children reload with it.
+	// Only while connected: the reload goes through sessions.open() and would ask the password again after a cancel.
+	const db = changesSchema(sql) && sessions.get(target.spaceId) && tree.dbNode(target.spaceId);
+	if (db) tree.refresh(db);
 }
 
 export async function openTable(store: Store, sessions: Sessions, node: Node) {

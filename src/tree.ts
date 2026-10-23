@@ -95,6 +95,11 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 		return path === root.path ? root : this.nodes.get(`${this.p(spaceId)}|f|${path}`);
 	}
 
+	/** The "DB" node of a space, if the view has already created it. */
+	dbNode(spaceId: string): Node | undefined {
+		return this.nodes.get(`${this.p(spaceId)}|db`);
+	}
+
 	getParent(n: Node): Node | undefined {
 		switch (n.kind) {
 			case 'space': return undefined;

@@ -19,6 +19,10 @@ export function riskyStatements(sql: string): string[] {
 		/^(DROP|TRUNCATE)\b/i.test(s) || /^ALTER\b.*\bDROP\b/i.test(s) || (/^(DELETE|UPDATE)\b/i.test(s) && !/\bWHERE\b/i.test(s)));
 }
 
+/** True when a statement changes the structure shown in the tree (databases, tables, columns, indexes). */
+export const changesSchema = (sql: string) =>
+	stripSql(sql).split(';').some(s => /^(CREATE|ALTER|DROP|RENAME)\b/i.test(s.trim()));
+
 /** True when every statement only reads (SELECT/SHOW/...), so it is safe to run again with one click. WITH is excluded: it can lead a DELETE/UPDATE. */
 export function isReadOnly(sql: string): boolean {
 	const parts = stripSql(sql).split(';').map(s => s.trim()).filter(Boolean);

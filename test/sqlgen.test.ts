@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { columnDefinition, createIfNotExists, gridSql, ident, insertBatch, isReadOnly, literal, riskyStatements, rowSql, toCsv, toJson, viewDefinition } from '../src/mysql/sqlgen';
+import { changesSchema, columnDefinition, createIfNotExists, gridSql, ident, insertBatch, isReadOnly, literal, riskyStatements, rowSql, toCsv, toJson, viewDefinition } from '../src/mysql/sqlgen';
 
 test('ident escapes backticks', () => {
 	assert.equal(ident('a`b'), '`a``b`');
@@ -21,6 +21,14 @@ test('isReadOnly accepts only reading statements', () => {
 	assert.equal(isReadOnly("SELECT 'delete'; UPDATE t SET a = 1 WHERE id = 1"), false);
 	assert.equal(isReadOnly('WITH x AS (SELECT 1) DELETE FROM t'), false);
 	assert.equal(isReadOnly(''), false);
+});
+
+test('changesSchema detects DDL only', () => {
+	assert.equal(changesSchema('alter table t add c int'), true);
+	assert.equal(changesSchema('/* x */ CREATE TABLE t (id int)'), true);
+	assert.equal(changesSchema('SELECT 1; DROP VIEW v'), true);
+	assert.equal(changesSchema("SELECT 'drop table x'"), false);
+	assert.equal(changesSchema('TRUNCATE t; UPDATE t SET a = 1'), false);
 });
 
 test('toCsv quotes when needed, NULL is empty', () => {

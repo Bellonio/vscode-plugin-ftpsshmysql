@@ -126,7 +126,7 @@ export function activate(context: vscode.ExtensionContext) {
 		cmd('wsm.openTelemetry', n => openTelemetry(sessions, state, n.spaceId)),
 
 		cmd('wsm.newQuery', n => newQuery(n)),
-		run('wsm.runQuery', () => runQuery(store, sessions)),
+		run('wsm.runQuery', () => runQuery(store, sessions, tree)),
 		run('wsm.queryTarget', () => chooseTarget(store, sessions)),
 		...queryStatusBar(store),
 		cmd('wsm.openTable', n => openTable(store, sessions, n)),
