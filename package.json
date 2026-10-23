@@ -217,6 +217,12 @@
         "category": "WSM"
       },
       {
+        "command": "wsm.fileHistory",
+        "title": "Versioni precedenti",
+        "category": "WSM",
+        "icon": "$(history)"
+      },
+      {
         "command": "wsm.terminalHere",
         "title": "Apri terminale qui",
         "category": "WSM",
@@ -402,6 +408,10 @@
         },
         {
           "command": "wsm.copyPath",
+          "when": "false"
+        },
+        {
+          "command": "wsm.fileHistory",
           "when": "false"
         },
         {
@@ -631,6 +641,16 @@
           "command": "wsm.copyPath",
           "when": "view == wsm.spaces && viewItem =~ /^(filesRoot|folder|file):/",
           "group": "3_misc@2"
+        },
+        {
+          "command": "wsm.fileHistory",
+          "when": "view == wsm.spaces && viewItem =~ /^file:/",
+          "group": "inline@1"
+        },
+        {
+          "command": "wsm.fileHistory",
+          "when": "view == wsm.spaces && viewItem =~ /^file:/",
+          "group": "3_misc@4"
         },
         {
           "command": "wsm.refreshNode",

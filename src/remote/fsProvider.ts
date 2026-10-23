@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { Sessions } from '../session';
 import { Entry, normalize, NotFoundError, RemoteFs, within } from './remoteFs';
+import { History } from './history';
 import { Snapshots } from './snapshots';
 
 /**
@@ -16,7 +17,7 @@ export class WsmFileSystem implements vscode.FileSystemProvider {
 	private changed = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
 	readonly onDidChangeFile = this.changed.event;
 
-	constructor(private sessions: Sessions, private snapshots: Snapshots) {}
+	constructor(private sessions: Sessions, private snapshots: Snapshots, private history: History) {}
 
 	/** `connect`: open the session (asking the password) if needed; otherwise undefined when not connected. */
 	private async resolve(uri: vscode.Uri, connect: boolean): Promise<{ fs: RemoteFs; path: string } | undefined> {
@@ -70,6 +71,7 @@ export class WsmFileSystem implements vscode.FileSystemProvider {
 		return this.wrap(uri, false, async (fs, path) => {
 			const [content, st] = await Promise.all([fs.readFile(path), fs.stat(path)]);
 			await this.snapshots.set(uri, st.mtime, content);
+			await this.history.add(uri.toString(), content);
 			return content;
 		}, async () => (await this.offlineSnapshot(uri)).content);
 	}

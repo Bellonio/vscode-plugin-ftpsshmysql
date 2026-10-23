@@ -3,6 +3,7 @@ import { FileOps } from './fileOps';
 import { openExport } from './mysql/dump';
 import { chooseTarget, dangerous, editColumn, newQuery, openTable, queryStatusBar, runQuery, showCreateTable, sqlTemplate } from './mysql/results';
 import { WsmFileSystem } from './remote/fsProvider';
+import { History } from './remote/history';
 import { Snapshots } from './remote/snapshots';
 import { search } from './search';
 import { Sessions } from './session';
@@ -20,7 +21,8 @@ export function activate(context: vscode.ExtensionContext) {
 	const vault = new Vault(state, store);
 	const sessions = new Sessions(store, vault, state);
 	const tree = new SpacesTree(store, sessions);
-	const files = new FileOps(sessions, tree);
+	const history = new History(vscode.Uri.joinPath(context.globalStorageUri, 'history').fsPath);
+	const files = new FileOps(sessions, tree, history);
 	const snapshots = new Snapshots(vscode.Uri.joinPath(context.globalStorageUri, 'snapshots'));
 	const openWsmUris = () => vscode.window.tabGroups.all.flatMap(g => g.tabs)
 		.flatMap(t => t.input instanceof vscode.TabInputText || t.input instanceof vscode.TabInputCustom ? [t.input.uri]
@@ -68,7 +70,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(
 		view, sessions,
-		vscode.workspace.registerFileSystemProvider('wsm', new WsmFileSystem(sessions, snapshots), { isCaseSensitive: true }),
+		vscode.workspace.registerFileSystemProvider('wsm', new WsmFileSystem(sessions, snapshots, history), { isCaseSensitive: true }),
 		// Local snapshots live only while their tab is open.
 		vscode.window.tabGroups.onDidChangeTabs(e => e.closed.length && snapshots.prune(openWsmUris())),
 		vscode.workspace.onDidChangeConfiguration(e => {
@@ -107,6 +109,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 		cmd('wsm.refreshNode', n => files.refresh(n)),
 		cmd('wsm.openFile', n => files.open(n)),
+		cmd('wsm.fileHistory', n => files.history(n)),
 		cmd('wsm.newFile', n => files.newFile(n)),
 		cmd('wsm.newFolder', n => files.newFolder(n)),
 		cmd('wsm.rename', n => files.rename(n)),

@@ -39,7 +39,8 @@ Tests only cover the pure modules (`spaces.ts`, `crypto.ts`, `telemetry/collect.
   - Files open as `wsm://<spaceId>/<path>`.
   - Reads never connect. When the space is offline they are served from `remote/snapshots.ts`: plain local copies in globalStorage, pruned when tabs close. This lets restored tabs work without a prompt.
   - Writes connect (prompting for the password) and check the remote mtime/size against the snapshot before overwriting.
-  - Opening a file from the tree (`FileOps.open`) connects first.
+  - Opening a file from the tree (`FileOps.open`) connects first. If the tab is already open, it is reverted so the file is re-read from the server, after a confirmation when it has unsaved changes.
+  - Every online read also stores a version in `remote/history.ts`: plain files under 1 MB, at most 50 per file, no duplicates. The clock icon on a file node reveals that folder in the OS file manager.
 - **Tree** (`tree.ts`): nodes are cached by id.
   - Child ids include a per-space nonce that changes at every activation and every disconnect. VSCode restores expanded state by id, so a stable id would make a restored "File" node connect by itself.
   - Spaces and folders have no `command`, and nothing does I/O except expanding "File"/"DB". A click must never connect.

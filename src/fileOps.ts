@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { promises as lfs } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, posix } from 'node:path';
+import { History } from './remote/history';
 import { mkdirp, NotFoundError, RemoteFs } from './remote/remoteFs';
 import { Session, Sessions } from './session';
 import { fileUri, formatSize, Node, SpacesTree } from './tree';
@@ -11,7 +12,7 @@ type DirNode = Extract<Node, { kind: 'filesRoot' | 'entry' }>;
 const MAX_OPEN = 10 * 1024 * 1024;
 
 export class FileOps {
-	constructor(private sessions: Sessions, private tree: SpacesTree) {}
+	constructor(private sessions: Sessions, private tree: SpacesTree, private versions: History) {}
 
 	private async ctx(node: Node | undefined): Promise<{ s: Session; fs: RemoteFs; node: DirNode } | undefined> {
 		if (!node || (node.kind !== 'filesRoot' && node.kind !== 'entry')) return;
@@ -44,7 +45,21 @@ export class FileOps {
 		}
 		// Opening from the tree is an explicit action: connect first (reads by the editor never connect on their own).
 		if (!(await this.sessions.open(node.spaceId))) return;
-		await vscode.commands.executeCommand('vscode.open', fileUri(node.spaceId, node.path));
+		const uri = fileUri(node.spaceId, node.path);
+		// VSCode only focuses an already open tab: re-read it, the file may have changed on the server.
+		const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === uri.toString());
+		const reload = doc && (!doc.isDirty || await vscode.window.showWarningMessage(
+			`${node.entry.name} ha modifiche non salvate. Ricaricarlo dal server perdendole?`, { modal: true }, 'Ricarica'));
+		await vscode.commands.executeCommand('vscode.open', uri);
+		if (reload) await vscode.commands.executeCommand('workbench.action.files.revert');
+	}
+
+	/** Opens the OS file manager on the folder of the file's saved versions. */
+	async history(node: Node) {
+		if (node.kind !== 'entry') return;
+		const last = await this.versions.latest(fileUri(node.spaceId, node.path).toString());
+		if (!last) return void vscode.window.showInformationMessage(`Nessuna versione salvata per ${node.entry.name}`);
+		await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(last));
 	}
 
 	async newFile(node: Node) {
