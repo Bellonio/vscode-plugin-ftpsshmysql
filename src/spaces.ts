@@ -32,7 +32,11 @@ export interface Space {
 	mysql?: MysqlConfig;
 	/** Encrypted Secrets blob ('' = no secrets stored). */
 	secrets: string;
+	/** Export files for a colleague only: secrets removed from the blob, by group id (see stripSecrets). Never stored. */
+	missing?: Missing;
 }
+
+export type Missing = Partial<Record<keyof Secrets, string>>;
 
 export interface Secrets {
 	filesPassword?: string;
@@ -74,6 +78,31 @@ export function moveSpace(spaces: Space[], id: string, dir: MoveDir): Space[] {
 
 export function nextOrder(spaces: Space[]): number {
 	return spaces.reduce((m, s) => Math.max(m, s.order + 1), 0);
+}
+
+/**
+ * Removes the chosen secrets for an export to a colleague. Equal values get the same group id, so the import asks
+ * each value once. The id is random, not a hash: a hash of a password could be attacked offline.
+ * The passphrase goes (and is asked) together with its key, under the key's id.
+ */
+export function stripSecrets(list: Secrets[], fields: (keyof Secrets)[]): { kept: Secrets; missing: Missing }[] {
+	const groups = new Map<string, string>();
+	return list.map(s => {
+		const kept = { ...s }, missing: Missing = {};
+		for (const f of fields) {
+			const v = s[f];
+			if (!v || f === 'passphrase') continue;
+			const k = `${f}\0${v}`;
+			if (!groups.has(k)) groups.set(k, newId() + newId());
+			missing[f] = groups.get(k);
+			delete kept[f];
+		}
+		if (missing.privateKey && kept.passphrase) {
+			missing.passphrase = missing.privateKey;
+			delete kept.passphrase;
+		}
+		return { kept, missing };
+	});
 }
 
 export function newId(): string {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { moveSpace, sortSpaces, Space } from '../src/spaces';
+import { moveSpace, sortSpaces, Space, stripSecrets } from '../src/spaces';
 
 const sp = (id: string, name: string, order: number, pinned = false): Space => ({ id, name, order, pinned, secrets: '' });
 const ids = (l: Space[]) => l.map(s => s.id).join(',');
@@ -24,4 +24,19 @@ test('moveSpace stays inside its pinned group and renumbers', () => {
 	assert.equal(ids(moveSpace(l, 'c', 'down')), 'p,a,b,c');
 	assert.deepEqual(moveSpace(l, 'c', 'top').map(s => s.order), [0, 1, 2, 3]);
 	assert.equal(l[1].order, 1, 'input not mutated');
+});
+
+test('stripSecrets groups equal values and keeps the passphrase with its key', () => {
+	const r = stripSecrets([
+		{ privateKey: 'K', passphrase: 'P', mysqlPassword: 'm1' },
+		{ privateKey: 'K', passphrase: 'P' },
+		{ privateKey: 'K2' },
+		{ filesPassword: 'f' },
+	], ['privateKey', 'passphrase']);
+	assert.deepEqual(r.map(x => x.kept), [{ mysqlPassword: 'm1' }, {}, {}, { filesPassword: 'f' }]);
+	assert.equal(r[0].missing.privateKey, r[1].missing.privateKey);
+	assert.equal(r[0].missing.passphrase, r[0].missing.privateKey);
+	assert.notEqual(r[2].missing.privateKey, r[0].missing.privateKey);
+	assert.equal(r[2].missing.passphrase, undefined);
+	assert.deepEqual(r[3].missing, {});
 });

@@ -3,7 +3,7 @@ import { decryptJson, encryptJson } from '../crypto';
 import { Session, Sessions } from '../session';
 import { FilesConfig, MysqlConfig, newId, nextOrder, SECRET_FIELDS, Secrets, Space } from '../spaces';
 import { Store } from '../store';
-import { Vault } from '../vault';
+import { readPrivateKey, Vault } from '../vault';
 import { page } from './html';
 
 interface FormData {
@@ -38,10 +38,7 @@ export function openSpaceForm(ctx: { store: Store; vault: Vault; sessions: Sessi
 			} else if (msg.type === 'pickKey') {
 				const [uri] = (await vscode.window.showOpenDialog({ title: 'Chiave privata SSH', canSelectMany: false })) ?? [];
 				if (!uri) return;
-				const text = Buffer.from(await vscode.workspace.fs.readFile(uri)).toString('utf8');
-				if (!/-----BEGIN [A-Z ]*PRIVATE KEY-----|PuTTY-User-Key-File/.test(text)) return status(false, 'Il file non sembra una chiave privata.');
-				if (text.startsWith('PuTTY')) return status(false, 'Chiave PuTTY (.ppk): convertila in formato OpenSSH con PuTTYgen (Conversions → Export OpenSSH key).');
-				pickedKey = text;
+				pickedKey = await readPrivateKey(uri);
 				panel.webview.postMessage({ type: 'keyPicked', name: uri.fsPath });
 			} else if (msg.type === 'test' || msg.type === 'save') {
 				const data = msg.data as FormData;
