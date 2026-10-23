@@ -46,11 +46,20 @@ export class FileOps {
 		// Opening from the tree is an explicit action: connect first (reads by the editor never connect on their own).
 		if (!(await this.sessions.open(node.spaceId))) return;
 		const uri = fileUri(node.spaceId, node.path);
+		const key = uri.toString();
 		// VSCode only focuses an already open tab: re-read it, the file may have changed on the server.
-		const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === uri.toString());
-		const reload = doc && (!doc.isDirty || await vscode.window.showWarningMessage(
-			`${node.entry.name} ha modifiche non salvate. Ricaricarlo dal server perdendole?`, { modal: true }, 'Ricarica'));
-		await vscode.commands.executeCommand('vscode.open', uri);
+		const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === key);
+		const tab = vscode.window.tabGroups.all.flatMap(g => g.tabs)
+			.find(t => t.input instanceof vscode.TabInputText && t.input.uri.toString() === key);
+		if (!doc) {
+			// A tab without a document was never loaded or failed to (offline, no snapshot): reopen it from the server.
+			if (tab) await vscode.window.tabGroups.close(tab);
+			return void await vscode.commands.executeCommand('vscode.open', uri);
+		}
+		const reload = !doc.isDirty || await vscode.window.showWarningMessage(
+			`${node.entry.name} ha modifiche non salvate. Sovrascriverle con la versione del server?`, { modal: true }, 'Sovrascrivi');
+		// Focus the existing tab (in its own group): the revert command acts on the active editor.
+		await vscode.window.showTextDocument(doc, { viewColumn: tab?.group.viewColumn, preview: tab?.isPreview });
 		if (reload) await vscode.commands.executeCommand('workbench.action.files.revert');
 	}
 
