@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { columnDefinition, ident, isReadOnly, literal, riskyStatements, rowSql, toCsv, toJson } from '../src/mysql/sqlgen';
+import { columnDefinition, gridSql, ident, isReadOnly, literal, riskyStatements, rowSql, toCsv, toJson } from '../src/mysql/sqlgen';
 
 test('ident escapes backticks', () => {
 	assert.equal(ident('a`b'), '`a``b`');
@@ -44,6 +44,21 @@ test('rowSql uses the primary key, falls back to all columns', () => {
 	assert.equal(rowSql('delete', src, [7, 'a', null], []),
 		"-- Attenzione: chiave primaria assente nel risultato, la riga è identificata da tutte le colonne\nDELETE FROM `d`.`t`\nWHERE `id` = 7\n\tAND `name` = 'a'\n\tAND `note` IS NULL\nLIMIT 1;\n");
 	assert.equal(rowSql('insert', src, [7, 'a', null], ['id']), "INSERT INTO `d`.`t` (`name`, `note`)\nVALUES (\n\t'a',\n\tNULL\n);\n");
+});
+
+test('gridSql builds DELETE/UPDATE/INSERT by original primary key and drops bad input', () => {
+	const src = { db: 'd', table: 't', columns: ['id', 'name', 'note'] };
+	const rows = [[1, 'a', null], [2, 'b', 'x']];
+	assert.deepEqual(gridSql(src, ['id'], rows, {
+		deletes: [1, 9],
+		updates: [{ row: 0, values: { 0: '5', 2: null } }, { row: 1, values: { 1: 'z' } }, { row: 0, values: { 7: 'x', 1: 3 as any } }],
+		inserts: [{ 1: "it's" }, {}],
+	}), [
+		'DELETE FROM `d`.`t` WHERE `id` = 2 LIMIT 1',
+		'UPDATE `d`.`t` SET `id` = \'5\', `note` = NULL WHERE `id` = 1 LIMIT 1',
+		"INSERT INTO `d`.`t` (`name`) VALUES ('it\\'s')",
+		'INSERT INTO `d`.`t` () VALUES ()',
+	]);
 });
 
 test('columnDefinition extracts a column line from SHOW CREATE TABLE', () => {

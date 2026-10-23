@@ -82,6 +82,32 @@ export function rowSql(action: 'update' | 'insert' | 'delete', src: RowSource, r
 	}
 }
 
+/** Grid edits sent by the results webview: values by column index, null = NULL; insert columns left out take their DEFAULT. */
+export interface GridChanges {
+	updates: { row: number; values: Record<string, string | null> }[];
+	inserts: Record<string, string | null>[];
+	deletes: number[];
+}
+
+/**
+ * Statements applying grid edits, rows identified by the primary key values they had when read. The input comes from
+ * the webview, so out-of-range rows/columns and non-string values are dropped. Order: DELETE, UPDATE, INSERT.
+ */
+export function gridSql(src: RowSource, keys: string[], rows: unknown[][], ch: GridChanges): string[] {
+	const t = `${ident(src.db)}.${ident(src.table)}`;
+	const okRow = (r: unknown): r is number => Number.isInteger(r) && (r as number) >= 0 && (r as number) < rows.length;
+	const cols = (v: Record<string, unknown> | undefined) => Object.entries(v ?? {})
+		.filter(([c, x]) => /^\d+$/.test(c) && +c < src.columns.length && (x === null || typeof x === 'string'))
+		.map(([c, x]) => [src.columns[+c], x] as [string, string | null]);
+	const deleted = new Set((ch.deletes ?? []).filter(okRow));
+	return [
+		...[...deleted].map(r => `DELETE FROM ${t} WHERE ${rowWhere(src, rows[r], keys)} LIMIT 1`),
+		...(ch.updates ?? []).filter(u => okRow(u?.row) && !deleted.has(u.row)).map(u => [u.row, cols(u.values)] as const).filter(([, c]) => c.length)
+			.map(([r, c]) => `UPDATE ${t} SET ${c.map(([n, v]) => `${ident(n)} = ${literal(v)}`).join(', ')} WHERE ${rowWhere(src, rows[r], keys)} LIMIT 1`),
+		...(ch.inserts ?? []).map(cols).map(c => `INSERT INTO ${t} (${c.map(([n]) => ident(n)).join(', ')}) VALUES (${c.map(([, v]) => literal(v)).join(', ')})`),
+	];
+}
+
 /** Definition of one column taken from SHOW CREATE TABLE (e.g. "varchar(255) NOT NULL DEFAULT ''"), without name and trailing comma. */
 export function columnDefinition(createTable: string, column: string): string | undefined {
 	const prefix = ident(column) + ' ';
