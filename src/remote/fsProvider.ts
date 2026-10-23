@@ -78,15 +78,20 @@ export class WsmFileSystem implements vscode.FileSystemProvider {
 
 	writeFile(uri: vscode.Uri, content: Uint8Array, options: { create: boolean; overwrite: boolean }): Promise<void> {
 		return this.wrap(uri, true, async (fs, path) => {
-			let remote: Entry | undefined;
-			try { remote = await fs.stat(path); } catch (e) { if (!(e instanceof NotFoundError)) throw e; }
-			if (!remote && !options.create) throw vscode.FileSystemError.FileNotFound(uri);
-			if (remote && !options.overwrite) throw vscode.FileSystemError.FileExists(uri);
-			if (remote) await this.confirmOverwrite(uri, remote);
-			await fs.writeFile(path, content);
-			const st = await fs.stat(path).catch(() => undefined);
-			await this.snapshots.set(uri, st?.mtime ?? Date.now(), content);
-			this.changed.fire([{ type: remote ? vscode.FileChangeType.Changed : vscode.FileChangeType.Created, uri }]);
+			const name = path.split('/').pop();
+			// Status bar spinner while uploading; failures already surface through VSCode's save error.
+			await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: `Salvataggio ${name}...` }, async () => {
+				let remote: Entry | undefined;
+				try { remote = await fs.stat(path); } catch (e) { if (!(e instanceof NotFoundError)) throw e; }
+				if (!remote && !options.create) throw vscode.FileSystemError.FileNotFound(uri);
+				if (remote && !options.overwrite) throw vscode.FileSystemError.FileExists(uri);
+				if (remote) await this.confirmOverwrite(uri, remote);
+				await fs.writeFile(path, content);
+				const st = await fs.stat(path).catch(() => undefined);
+				await this.snapshots.set(uri, st?.mtime ?? Date.now(), content);
+				this.changed.fire([{ type: remote ? vscode.FileChangeType.Changed : vscode.FileChangeType.Created, uri }]);
+			});
+			vscode.window.setStatusBarMessage(`$(check) Salvato ${name}`, 3000);
 		});
 	}
 
