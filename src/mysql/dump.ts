@@ -1,8 +1,8 @@
 import * as vscode from 'vscode';
 import { createWriteStream } from 'node:fs';
-import { unlink } from 'node:fs/promises';
+import { access, unlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
@@ -11,7 +11,7 @@ import { Session, Sessions } from '../session';
 import { Node } from '../tree';
 import { page } from '../webview/html';
 import { confirmRisky, primaryKey } from './results';
-import { createIfNotExists, dumpFooter, dumpHeader, ident, insertBatch, InsertVerb, jsonRows, toCsv, viewDefinition } from './sqlgen';
+import { createIfNotExists, dumpFooter, dumpHeader, ident, insertBatch, InsertVerb, isGenerated, jsonRows, orderViews, safeFileName, toCsv, viewDefinition } from './sqlgen';
 
 interface Obj { name: string; view: boolean }
 interface Options {
@@ -54,17 +54,23 @@ export async function openExport(sessions: Sessions, node: Node) {
 	panel.onDidDispose(() => panels.delete(key));
 	const status = (ok: boolean, text: string) => panel.webview.postMessage({ type: 'status', ok, text });
 	panel.webview.html = html(panel.webview);
+	/** One export at a time per page: the button is disabled too, but the webview is not trusted. */
+	let busy = false;
 	panel.webview.onDidReceiveMessage(async msg => {
+		if (msg.type === 'ready') return panel.webview.postMessage({ type: 'init', objects, table, db, space: s.space.name });
+		if (msg.type !== 'export') return;
+		if (busy) return; // a status here would re-enable the button while the first export runs
+		busy = true;
 		try {
-			if (msg.type === 'ready') panel.webview.postMessage({ type: 'init', objects, table, db, space: s.space.name });
-			else if (msg.type === 'export') {
-				const opts = sanitize(msg.options, objects);
-				if (typeof opts === 'string') return status(false, opts);
-				const session = await sessions.open(spaceId);
-				if (session) status(true, await run(session, db, objects.filter(o => opts.tables.includes(o.name)), opts));
-			}
+			const opts = sanitize(msg.options, objects);
+			if (typeof opts === 'string') return status(false, opts);
+			const session = await sessions.open(spaceId);
+			// Every path ends with a status message: it is what re-enables the button.
+			status(true, session ? await run(session, db, objects.filter(o => opts.tables.includes(o.name)), opts) : 'Esportazione annullata.');
 		} catch (e: any) {
 			status(false, e?.sqlMessage ?? e?.message ?? String(e));
+		} finally {
+			busy = false;
 		}
 	});
 }
@@ -110,7 +116,7 @@ async function run(s: Session, db: string, objects: Obj[], o: Options): Promise<
 	let files: { path: string; objects: Obj[] }[];
 	if (sql || one) {
 		const uri = await vscode.window.showSaveDialog({
-			title: 'Esporta', defaultUri: vscode.Uri.file(join(homedir(), `${sql ? db + (one ? '.' + one : '') : one}.${o.format}${gz}`)),
+			title: 'Esporta', defaultUri: vscode.Uri.file(join(homedir(), safeFileName(`${sql ? db + (one ? '.' + one : '') : one}.${o.format}${gz}`))),
 			filters: { [o.format.toUpperCase()]: [o.format + gz] },
 		});
 		if (!uri) return 'Esportazione annullata.';
@@ -118,7 +124,20 @@ async function run(s: Session, db: string, objects: Obj[], o: Options): Promise<
 	} else {
 		const [dir] = await vscode.window.showOpenDialog({ title: `Cartella in cui salvare un file .${o.format} per tabella`, canSelectFolders: true, canSelectFiles: false, openLabel: 'Esporta qui' }) ?? [];
 		if (!dir) return 'Esportazione annullata.';
-		files = objects.map(x => ({ path: join(dir.fsPath, `${x.name}.${o.format}${gz}`), objects: [x] }));
+		// Names come from the server: no "../" out of the folder, and "Users"/"users" must not overwrite each other on Windows.
+		const used = new Set<string>();
+		files = objects.map(x => {
+			let base = safeFileName(x.name);
+			for (let i = 2; used.has(base.toLowerCase()); i++) base = `${safeFileName(x.name)}_${i}`;
+			used.add(base.toLowerCase());
+			return { path: join(dir.fsPath, `${base}.${o.format}${gz}`), objects: [x] };
+		});
+		// The single-file save dialog already asks before overwriting; the folder picker doesn't.
+		const existing = (await Promise.all(files.map(f => access(f.path).then(() => basename(f.path), () => undefined)))).filter(Boolean);
+		if (existing.length && await vscode.window.showWarningMessage(`${existing.length} file esistono già nella cartella: sovrascriverli?`,
+			{ modal: true, detail: existing.slice(0, 10).join('\n') + (existing.length > 10 ? `\n... e altri ${existing.length - 10}` : '') }, 'Sovrascrivi') !== 'Sovrascrivi') {
+			return 'Esportazione annullata.';
+		}
 	}
 	const where = o.where ? `\nWHERE ${o.where}` : '';
 	if (where && !await confirmRisky(`SELECT 1 FROM t${where}`)) return 'Esportazione annullata.';
@@ -161,32 +180,45 @@ async function run(s: Session, db: string, objects: Obj[], o: Options): Promise<
 				}
 			}
 		}
+		/**
+		 * All the structure first (tables, then views in dependency order), then the data. Every CREATE/DROP commits on
+		 * its own, so this way the optional transaction really covers all the INSERTs.
+		 */
 		async function* sqlDump(list: Obj[]): AsyncGenerator<string> {
+			const full = (name: string) => `${ident(db)}.${ident(name)}`;
+			const tables = list.filter(x => !x.view);
+			const structure = o.content !== 'data', data = o.content !== 'structure';
+			const step = 100 / ((structure ? list.length : 0) + (data ? tables.length : 0) || 1);
 			yield dumpHeader(`${db}${one ? '.' + one : ''}`);
 			if (o.createDb) yield `${createIfNotExists(String((await query(conn, `SHOW CREATE DATABASE ${ident(db)}`))[0][1]))};\nUSE ${ident(db)};\n\n`;
-			if (o.transaction) yield 'START TRANSACTION;\n\n';
-			// Views after tables: they are built on them. View data is not dumped, it comes from the tables.
-			for (const x of [...list].sort((a, b) => +a.view - +b.view)) {
-				if (token.isCancellationRequested) return;
-				progress.report({ message: x.name, increment: 100 / objects.length });
-				const t = ident(x.name), full = `${ident(db)}.${t}`;
-				if (x.view) {
-					if (o.content === 'data') continue;
-					const [r] = await query(conn, `SHOW CREATE VIEW ${full}`);
-					yield `${o.drop ? `DROP VIEW IF EXISTS ${t};\n` : ''}${viewDefinition(String(r[1]))};\n\n`;
-					continue;
+			if (structure) {
+				for (const x of tables) {
+					if (token.isCancellationRequested) return;
+					progress.report({ message: x.name, increment: step });
+					const [r] = await query(conn, `SHOW CREATE TABLE ${full(x.name)}`);
+					yield `${o.drop ? `DROP TABLE IF EXISTS ${ident(x.name)};\n` : ''}${createIfNotExists(String(r[1]), o.autoIncrement)};\n\n`;
 				}
-				if (o.content !== 'data') {
-					const [r] = await query(conn, `SHOW CREATE TABLE ${full}`);
-					yield `${o.drop ? `DROP TABLE IF EXISTS ${t};\n` : ''}${createIfNotExists(String(r[1]), o.autoIncrement)};\n\n`;
+				// Views after tables, and after the views they select from. View data is not dumped, it comes from the tables.
+				const views = [];
+				for (const x of list.filter(v => v.view)) {
+					if (token.isCancellationRequested) return;
+					progress.report({ message: x.name, increment: step });
+					views.push({ name: x.name, def: viewDefinition(String((await query(conn, `SHOW CREATE VIEW ${full(x.name)}`))[0][1])) });
 				}
-				if (o.content === 'structure') continue;
-				// Generated columns can't be inserted: mysqldump leaves them out too.
-				const columns = (await query(conn, `SHOW COLUMNS FROM ${full}`)).filter(c => !/GENERATED/i.test(String(c[5]))).map(c => String(c[0]));
-				for await (const b of blocks(x.name, columns)) yield insertBatch(x.name, columns, b, o.insert);
-				yield '\n';
+				for (const v of orderViews(views)) yield `${o.drop ? `DROP VIEW IF EXISTS ${ident(v.name)};\n` : ''}${v.def};\n\n`;
 			}
-			if (o.transaction) yield 'COMMIT;\n\n';
+			if (data) {
+				if (o.transaction) yield 'START TRANSACTION;\n\n';
+				for (const x of tables) {
+					if (token.isCancellationRequested) return;
+					progress.report({ message: x.name, increment: step });
+					// Generated columns can't be inserted: mysqldump leaves them out too.
+					const columns = (await query(conn, `SHOW COLUMNS FROM ${full(x.name)}`)).filter(c => !isGenerated(String(c[5]))).map(c => String(c[0]));
+					for await (const b of blocks(x.name, columns)) yield insertBatch(x.name, columns, b, o.insert);
+					yield '\n';
+				}
+				if (o.transaction) yield 'COMMIT;\n\n';
+			}
 			yield dumpFooter;
 		}
 		for (const f of files) {
@@ -255,10 +287,10 @@ input[type=text], input[type=number], select { width: 100%; }
 	<p class="muted struct">CREATE TABLE è sempre con IF NOT EXISTS.</p>
 	<label class="row data">Istruzione <select id="insert"><option>INSERT</option><option>INSERT IGNORE</option><option>REPLACE</option></select></label>
 	<label class="row data">Righe per INSERT <input type="number" id="perInsert" min="1" max="100000" value="500"></label>
-	<label class="check"><input type="checkbox" id="transaction"> Racchiudi in una transazione (START TRANSACTION / COMMIT)</label>
+	<label class="check data"><input type="checkbox" id="transaction"> Dati in una transazione (START TRANSACTION / COMMIT; la struttura viene scritta prima)</label>
 </fieldset>
 
-<div class="actions"><button type="submit">Esporta...</button></div>
+<div class="actions"><button type="submit" id="go">Esporta...</button></div>
 <div id="status"></div>
 </form>`;
 	const script = `
@@ -282,6 +314,8 @@ $('none').addEventListener('click', () => { boxes().forEach(b => b.checked = fal
 const num = id => $(id).value === '' ? NaN : Number($(id).value);
 $('f').addEventListener('submit', e => {
 	e.preventDefault();
+	if ($('go').disabled) return;
+	$('go').disabled = true; // re-enabled by the status message that ends every export
 	$('status').textContent = '';
 	vscode.postMessage({ type: 'export', options: {
 		tables: picked(), format: $('format').value, gzip: $('gzip').checked,
@@ -296,7 +330,7 @@ function select(table) {
 	sync();
 }
 window.addEventListener('message', ({ data: m }) => {
-	if (m.type === 'status') { $('status').textContent = m.text; $('status').className = m.ok ? 'muted' : 'error'; }
+	if (m.type === 'status') { $('status').textContent = m.text; $('status').className = m.ok ? 'muted' : 'error'; $('go').disabled = false; }
 	if (m.type === 'select') select(m.table);
 	if (m.type === 'init') {
 		$('title').textContent = m.db + ' (' + m.space + ')';

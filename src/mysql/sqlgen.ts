@@ -65,9 +65,35 @@ export const createIfNotExists = (create: string, autoIncrement = true) => {
 	return autoIncrement ? s : s.replace(/ AUTO_INCREMENT=\d+/, '');
 };
 
-/** SHOW CREATE VIEW output without DEFINER / SQL SECURITY DEFINER: the definer user often doesn't exist on the target server. */
+/**
+ * SHOW CREATE VIEW output without DEFINER / SQL SECURITY DEFINER (the definer user often doesn't exist on the target
+ * server), as CREATE OR REPLACE: like the tables' IF NOT EXISTS, importing on an existing database doesn't stop here.
+ */
 export const viewDefinition = (createView: string) =>
-	createView.replace(/ DEFINER=(`(?:``|[^`])*`|'[^']*'|\S+)@(`(?:``|[^`])*`|'[^']*'|\S+)/i, '').replace(/ SQL SECURITY DEFINER/i, '');
+	createView.replace(/ DEFINER=(`(?:``|[^`])*`|'[^']*'|\S+)@(`(?:``|[^`])*`|'[^']*'|\S+)/i, '').replace(/ SQL SECURITY DEFINER/i, '')
+		.replace(/^CREATE (?!OR REPLACE )/i, 'CREATE OR REPLACE ');
+
+/**
+ * Views in creation order: each one after the views its definition names. Cycles keep the given order.
+ * ponytail: a name is "used" when its quoted form appears in the definition (a same-named column can only reorder).
+ */
+export function orderViews<T extends { name: string; def: string }>(views: T[]): T[] {
+	const out: T[] = [], left = [...views];
+	while (left.length) {
+		const i = left.findIndex(v => !left.some(w => w !== v && v.def.includes(ident(w.name))));
+		out.push(...left.splice(Math.max(i, 0), 1));
+	}
+	return out;
+}
+
+/** SHOW COLUMNS "Extra" of a generated column. Not DEFAULT_GENERATED (MySQL 8: expression default such as CURRENT_TIMESTAMP). */
+export const isGenerated = (extra: string) => /\b(VIRTUAL|STORED) GENERATED\b/i.test(extra);
+
+/** Table name usable as a file name on Windows too: no path separators or reserved characters, no reserved device names. */
+export function safeFileName(name: string): string {
+	const s = name.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/^\.+|[. ]+$/g, '_') || '_';
+	return /^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(s) ? '_' + s : s;
+}
 
 export type InsertVerb = 'INSERT' | 'INSERT IGNORE' | 'REPLACE';
 

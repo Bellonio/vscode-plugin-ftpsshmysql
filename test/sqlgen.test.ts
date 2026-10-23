@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { changesSchema, columnDefinition, createIfNotExists, gridSql, ident, insertBatch, isReadOnly, literal, riskyStatements, rowSql, toCsv, toJson, viewDefinition } from '../src/mysql/sqlgen';
+import { changesSchema, columnDefinition, createIfNotExists, gridSql, ident, insertBatch, isGenerated, isReadOnly, literal, orderViews, riskyStatements, rowSql, safeFileName, toCsv, toJson, viewDefinition } from '../src/mysql/sqlgen';
 
 test('ident escapes backticks', () => {
 	assert.equal(ident('a`b'), '`a``b`');
@@ -83,7 +83,25 @@ test('export helpers: multi-row INSERT, CREATE IF NOT EXISTS, view without defin
 	assert.equal(createIfNotExists(create, false), 'CREATE TABLE IF NOT EXISTS `t` (\n  `id` int NOT NULL AUTO_INCREMENT\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
 	assert.equal(createIfNotExists('CREATE DATABASE `d` /*!40100 DEFAULT CHARACTER SET utf8mb4 */'), 'CREATE DATABASE IF NOT EXISTS `d` /*!40100 DEFAULT CHARACTER SET utf8mb4 */');
 	assert.equal(viewDefinition('CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` AS select 1'),
-		'CREATE ALGORITHM=UNDEFINED VIEW `v` AS select 1');
-	assert.equal(viewDefinition("CREATE DEFINER='u'@'%' SQL SECURITY INVOKER VIEW `v` AS select 1"), 'CREATE SQL SECURITY INVOKER VIEW `v` AS select 1');
+		'CREATE OR REPLACE ALGORITHM=UNDEFINED VIEW `v` AS select 1');
+	assert.equal(viewDefinition("CREATE DEFINER='u'@'%' SQL SECURITY INVOKER VIEW `v` AS select 1"), 'CREATE OR REPLACE SQL SECURITY INVOKER VIEW `v` AS select 1');
+	assert.equal(viewDefinition('CREATE OR REPLACE VIEW `v` AS select 1'), 'CREATE OR REPLACE VIEW `v` AS select 1');
 	assert.equal(toCsv(['a'], [['x,y']], false), '"x,y"\r\n');
+});
+
+test('orderViews puts each view after the views it uses, cycles keep the order', () => {
+	const v = (name: string, uses = '') => ({ name, def: `CREATE VIEW \`${name}\` AS select * from ${uses || '`t`'}` });
+	const names = (l: { name: string }[]) => l.map(x => x.name).join(',');
+	assert.equal(names(orderViews([v('a', '`db`.`c`'), v('b'), v('c', '`b`')])), 'b,c,a');
+	assert.equal(names(orderViews([v('x', '`y`'), v('y', '`x`'), v('z')])), 'z,x,y');
+});
+
+test('isGenerated skips DEFAULT_GENERATED, safeFileName keeps exports inside the folder', () => {
+	assert.equal(isGenerated('VIRTUAL GENERATED'), true);
+	assert.equal(isGenerated('STORED GENERATED'), true);
+	assert.equal(isGenerated('DEFAULT_GENERATED on update CURRENT_TIMESTAMP'), false);
+	assert.equal(safeFileName('../a\\b:c'), '__a_b_c');
+	assert.equal(safeFileName('con'), '_con');
+	assert.equal(safeFileName('nul.csv'), '_nul.csv');
+	assert.equal(safeFileName('users.csv'), 'users.csv');
 });
