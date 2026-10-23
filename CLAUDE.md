@@ -44,6 +44,8 @@ Tests only cover the pure modules (`spaces.ts`, `crypto.ts`, `telemetry/collect.
 - **Tree** (`tree.ts`): nodes are cached by id.
   - Child ids include a per-space nonce that changes at every activation and every disconnect. VSCode restores expanded state by id, so a stable id would make a restored "File" node connect by itself.
   - Spaces and folders have no `command`, and nothing does I/O except expanding "File"/"DB". A click must never connect.
+  - In a space without MySQL, "File" starts expanded, so expanding the space connects. That is why the space item id carries the nonce too: spaces come back collapsed at activation and disconnect.
+  - "Filtra" (`applyFilter()` in `spaces.ts`) is in memory only. It shows in the view description and in the `wsm.filtered` context key.
   - `DropController` accepts only external `text/uri-list` drops (upload). Tree nodes are not draggable, on purpose.
 - **Ordering**: `wsm.sortMode` is `alpha` or `manual`; pinned spaces always come first. The `wsm.manualSort` context key gates the move commands and Alt+↑/↓. `moveSpace()` keeps a space inside its pinned group.
 - **Telemetry** (`telemetry/`): anti-ban rules.

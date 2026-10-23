@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { posix } from 'node:path';
 import { Entry, normalize } from './remote/remoteFs';
 import { Session, Sessions } from './session';
-import { SortMode, sortSpaces, Space } from './spaces';
+import { applyFilter, SortMode, sortSpaces, Space } from './spaces';
 import { Store } from './store';
 
 export type Node =
@@ -27,8 +27,10 @@ export function sortMode(): SortMode {
 /**
  * Rules that make accidental connections impossible:
  * - no `command` on spaces/folders, so a click (or the mouse-up of a failed drag) does nothing but select;
- * - every container starts collapsed and constructors do no I/O;
- * - a connection is opened only when the user expands "File" or "DB", or runs an explicit action.
+ * - constructors do no I/O; every container starts collapsed, except "File" of a space without MySQL, which starts
+ *   expanded so that expanding the space connects right away;
+ * - for that reason the space item id carries the nonce too: spaces come back collapsed at activation and disconnect;
+ * - a connection is opened only when the user expands a space without MySQL, "File" or "DB", or runs an explicit action.
  */
 export class SpacesTree implements vscode.TreeDataProvider<Node> {
 	private changed = new vscode.EventEmitter<Node | undefined>();
@@ -41,6 +43,8 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 	 */
 	private nonces = new Map<string, string>();
 	private boot = Date.now().toString(36);
+	/** Keys from `filterKeys()` selected with "Filtra" (in memory only). */
+	filter: string[] = [];
 
 	private p(spaceId: string) {
 		return `${spaceId}|${this.nonces.get(spaceId) ?? this.boot}`;
@@ -55,6 +59,8 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 				// New child ids: the disconnected space's expanded folders come back collapsed, without reconnecting.
 				this.dropSpaceNodes(id);
 				this.nonces.set(id, Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+				// The space item id changed too: refresh from the root so it comes back collapsed.
+				return this.changed.fire(undefined);
 			}
 			this.changed.fire(space);
 		});
@@ -118,16 +124,22 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 			case 'space': {
 				const connected = !!this.sessions.get(n.spaceId);
 				const item = new vscode.TreeItem(space?.name ?? '?', C.Collapsed);
-				item.id = n.id;
-				item.iconPath = new vscode.ThemeIcon(connected ? 'vm-active' : 'vm-outline');
-				item.description = [space?.pinned ? '📌' : '', space?.files ? `${space.files.user}@${space.files.host}` : space?.mysql?.host].filter(Boolean).join(' ');
+				item.id = this.p(n.spaceId);
+				const f = space?.files, m = space?.mysql;
+				item.iconPath = new vscode.ThemeIcon(f?.protocol === 'sftp' ? 'terminal' : f ? 'cloud' : 'database');
+				item.description = space?.pinned ? '📌' : undefined;
 				item.contextValue = ['space', space?.pinned && 'pinned', connected && 'connected'].filter(Boolean).join(':');
-				item.tooltip = connected ? 'Connesso' : 'Non connesso: espandi "File" o "DB" per connetterti';
+				item.tooltip = [
+					space?.name,
+					f && `${f.protocol === 'sftp' ? 'SFTP' : f.ftps ? 'FTPS' : 'FTP'} ${f.user}@${f.host}:${f.port}`,
+					m && `MySQL ${m.user}@${m.host}:${m.port}${m.viaSsh ? ' (tunnel SSH)' : ''}`,
+					connected ? 'Connesso' : !m ? 'Non connesso: espandi per connetterti' : f ? 'Non connesso: espandi "File" o "DB" per connetterti' : 'Non connesso: espandi "DB" per connetterti',
+				].filter(Boolean).join('\n');
 				return item;
 			}
 			case 'filesRoot': {
 				const f = space!.files!;
-				const item = new vscode.TreeItem(`File (${f.protocol.toUpperCase()}${f.ftps ? 'S' : ''})`, C.Collapsed);
+				const item = new vscode.TreeItem(`File (${f.protocol.toUpperCase()}${f.ftps ? 'S' : ''})`, space!.mysql ? C.Collapsed : C.Expanded);
 				item.id = n.id;
 				item.description = n.path;
 				item.iconPath = new vscode.ThemeIcon('root-folder');
@@ -205,16 +217,16 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 	}
 
 	async getChildren(n?: Node): Promise<Node[]> {
-		if (!n) return sortSpaces(this.store.all(), sortMode()).map(s => this.spaceNode(s.id));
+		if (!n) return sortSpaces(applyFilter(this.store.all(), this.filter), sortMode()).map(s => this.spaceNode(s.id));
 		const space = this.store.get(n.spaceId);
 		if (!space) return [];
 		switch (n.kind) {
 			case 'space': {
 				const out: Node[] = [];
-				if (space.files) out.push(this.filesRootNode(space));
 				if (space.files?.protocol === 'sftp') out.push(this.node({ kind: 'terminal', id: `${this.p(space.id)}|term`, spaceId: space.id }));
-				if (space.mysql) out.push(this.node({ kind: 'db', id: `${this.p(space.id)}|db`, spaceId: space.id }));
 				if (space.files?.protocol === 'sftp' || space.mysql) out.push(this.node({ kind: 'telemetry', id: `${this.p(space.id)}|tele`, spaceId: space.id }));
+				if (space.files) out.push(this.filesRootNode(space));
+				if (space.mysql) out.push(this.node({ kind: 'db', id: `${this.p(space.id)}|db`, spaceId: space.id }));
 				return out;
 			}
 			case 'filesRoot':

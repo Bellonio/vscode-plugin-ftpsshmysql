@@ -42,7 +42,13 @@
     "viewsWelcome": [
       {
         "view": "wsm.spaces",
-        "contents": "Nessuno spazio configurato.\n[Aggiungi spazio](command:wsm.addSpace)\n[Importa spazi](command:wsm.import)"
+        "contents": "Nessuno spazio configurato.\n[Aggiungi spazio](command:wsm.addSpace)\n[Importa spazi](command:wsm.import)",
+        "when": "!wsm.filtered"
+      },
+      {
+        "view": "wsm.spaces",
+        "contents": "Nessuno spazio corrisponde al filtro.\n[Rimuovi filtro](command:wsm.clearFilter)",
+        "when": "wsm.filtered"
       }
     ],
     "configuration": {
@@ -146,6 +152,18 @@
         "title": "Cerca spazi e file caricati",
         "category": "WSM",
         "icon": "$(search)"
+      },
+      {
+        "command": "wsm.filter",
+        "title": "Filtra spazi per server o tipo",
+        "category": "WSM",
+        "icon": "$(filter)"
+      },
+      {
+        "command": "wsm.clearFilter",
+        "title": "Rimuovi filtro spazi",
+        "category": "WSM",
+        "icon": "$(clear-all)"
       },
       {
         "command": "wsm.export",
@@ -506,6 +524,16 @@
           "group": "navigation@1"
         },
         {
+          "command": "wsm.filter",
+          "when": "view == wsm.spaces",
+          "group": "navigation@1"
+        },
+        {
+          "command": "wsm.clearFilter",
+          "when": "view == wsm.spaces && wsm.filtered",
+          "group": "navigation@1"
+        },
+        {
           "command": "wsm.addSpace",
           "when": "view == wsm.spaces",
           "group": "navigation@2"
@@ -549,12 +577,12 @@
       "view/item/context": [
         {
           "command": "wsm.moveUp",
-          "when": "view == wsm.spaces && wsm.manualSort && viewItem =~ /^space/",
+          "when": "view == wsm.spaces && wsm.manualSort && !wsm.filtered && viewItem =~ /^space/",
           "group": "inline@1"
         },
         {
           "command": "wsm.moveDown",
-          "when": "view == wsm.spaces && wsm.manualSort && viewItem =~ /^space/",
+          "when": "view == wsm.spaces && wsm.manualSort && !wsm.filtered && viewItem =~ /^space/",
           "group": "inline@2"
         },
         {
@@ -584,12 +612,12 @@
         },
         {
           "command": "wsm.moveTop",
-          "when": "view == wsm.spaces && wsm.manualSort && viewItem =~ /^space/",
+          "when": "view == wsm.spaces && wsm.manualSort && !wsm.filtered && viewItem =~ /^space/",
           "group": "2_order@2"
         },
         {
           "command": "wsm.moveBottom",
-          "when": "view == wsm.spaces && wsm.manualSort && viewItem =~ /^space/",
+          "when": "view == wsm.spaces && wsm.manualSort && !wsm.filtered && viewItem =~ /^space/",
           "group": "2_order@3"
         },
         {
@@ -785,12 +813,12 @@
       {
         "command": "wsm.moveUp",
         "key": "alt+up",
-        "when": "focusedView == wsm.spaces && wsm.manualSort"
+        "when": "focusedView == wsm.spaces && wsm.manualSort && !wsm.filtered"
       },
       {
         "command": "wsm.moveDown",
         "key": "alt+down",
-        "when": "focusedView == wsm.spaces && wsm.manualSort"
+        "when": "focusedView == wsm.spaces && wsm.manualSort && !wsm.filtered"
       },
       {
         "command": "wsm.rename",

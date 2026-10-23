@@ -76,6 +76,26 @@ export function moveSpace(spaces: Space[], id: string, dir: MoveDir): Space[] {
 	return list;
 }
 
+/**
+ * Filter keys of a space: `host:<host>` for files and MySQL hosts, `type:sftp|ftp|mysql`.
+ * A MySQL host reached through the SSH tunnel is relative to the server (usually localhost), so it is not a server.
+ */
+export function filterKeys(s: Space): string[] {
+	return [
+		s.files && `host:${s.files.host}`, s.mysql && !s.mysql.viaSsh && `host:${s.mysql.host}`,
+		s.files && `type:${s.files.protocol}`, s.mysql && 'type:mysql',
+	].filter((k): k is string => !!k);
+}
+
+/** OR inside a group (host / type), AND across groups. Empty selection = all. */
+export function applyFilter(spaces: Space[], selected: string[]): Space[] {
+	const groups = ['host:', 'type:'].map(g => selected.filter(k => k.startsWith(g))).filter(g => g.length);
+	return spaces.filter(s => {
+		const keys = filterKeys(s);
+		return groups.every(g => g.some(k => keys.includes(k)));
+	});
+}
+
 export function nextOrder(spaces: Space[]): number {
 	return spaces.reduce((m, s) => Math.max(m, s.order + 1), 0);
 }

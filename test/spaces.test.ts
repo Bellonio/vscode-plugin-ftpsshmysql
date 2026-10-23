@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { moveSpace, sortSpaces, Space, stripSecrets } from '../src/spaces';
+import { applyFilter, filterKeys, moveSpace, sortSpaces, Space, stripSecrets } from '../src/spaces';
 
 const sp = (id: string, name: string, order: number, pinned = false): Space => ({ id, name, order, pinned, secrets: '' });
 const ids = (l: Space[]) => l.map(s => s.id).join(',');
@@ -39,4 +39,20 @@ test('stripSecrets groups equal values and keeps the passphrase with its key', (
 	assert.notEqual(r[2].missing.privateKey, r[0].missing.privateKey);
 	assert.equal(r[2].missing.passphrase, undefined);
 	assert.deepEqual(r[3].missing, {});
+});
+
+test('applyFilter: OR inside host/type, AND across them, empty = all', () => {
+	const files = (protocol: 'sftp' | 'ftp', host: string) => ({ protocol, host, port: 22, user: 'u', auth: 'password' as const, rootPath: '/' });
+	const mysql = (host: string) => ({ host, port: 3306, user: 'u', viaSsh: false });
+	const l = [
+		{ ...sp('a', 'a', 0), files: files('sftp', '1.1.1.1') },
+		{ ...sp('b', 'b', 1), files: files('ftp', '1.1.1.1'), mysql: mysql('localhost') },
+		{ ...sp('c', 'c', 2), files: files('ftp', '2.2.2.2') },
+		{ ...sp('d', 'd', 3), mysql: mysql('3.3.3.3') },
+	];
+	assert.equal(ids(applyFilter(l, [])), 'a,b,c,d');
+	assert.equal(ids(applyFilter(l, ['host:1.1.1.1', 'host:3.3.3.3'])), 'a,b,d');
+	assert.equal(ids(applyFilter(l, ['type:ftp', 'type:mysql'])), 'b,c,d');
+	assert.equal(ids(applyFilter(l, ['host:1.1.1.1', 'type:ftp'])), 'b');
+	assert.deepEqual(filterKeys({ ...l[0], mysql: { ...mysql('localhost'), viaSsh: true } }), ['host:1.1.1.1', 'type:sftp', 'type:mysql']);
 });

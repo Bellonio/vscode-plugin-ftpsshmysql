@@ -7,7 +7,7 @@ import { History } from './remote/history';
 import { Snapshots } from './remote/snapshots';
 import { search } from './search';
 import { Sessions } from './session';
-import { moveSpace, MoveDir } from './spaces';
+import { filterKeys, moveSpace, MoveDir } from './spaces';
 import { Store } from './store';
 import { openTelemetry } from './telemetry/panel';
 import { openTerminal } from './terminal';
@@ -68,6 +68,27 @@ export function activate(context: vscode.ExtensionContext) {
 	const setSort = (mode: 'alpha' | 'manual') => () =>
 		vscode.workspace.getConfiguration('wsm').update('sortMode', mode, vscode.ConfigurationTarget.Global);
 
+	const types: Record<string, string> = { 'type:sftp': 'SFTP (SSH)', 'type:ftp': 'FTP', 'type:mysql': 'con MySQL' };
+	const setFilter = (keys: string[]) => {
+		tree.filter = keys;
+		view.description = keys.length ? `Filtro: ${keys.map(k => types[k] ?? k.slice(5)).join(', ')}` : undefined;
+		vscode.commands.executeCommand('setContext', 'wsm.filtered', keys.length > 0);
+		tree.refresh();
+	};
+	// ponytail: no QuickPick separators, their support with canPickMany varies across the VSCode versions we accept.
+	const pickFilter = async () => {
+		const count = new Map<string, number>();
+		for (const s of store.all()) for (const k of new Set(filterKeys(s))) count.set(k, (count.get(k) ?? 0) + 1);
+		const item = (key: string, label: string) =>
+			({ key, label, description: `${count.get(key) ?? 0} spazi`, picked: tree.filter.includes(key) });
+		const hosts = [...count.keys()].filter(k => k.startsWith('host:')).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+		const picks = await vscode.window.showQuickPick([
+			...hosts.map(k => item(k, `$(server) ${k.slice(5)}`)),
+			...Object.entries(types).map(([k, label]) => item(k, `$(tag) ${label}`)),
+		], { title: 'Filtra spazi', placeHolder: 'Server in OR, tipi in OR, server e tipo in AND. Nessuna selezione = tutti', canPickMany: true, matchOnDescription: true });
+		if (picks) setFilter(picks.map(p => p.key));
+	};
+
 	context.subscriptions.push(
 		view, sessions,
 		vscode.workspace.registerFileSystemProvider('wsm', new WsmFileSystem(sessions, snapshots, history), { isCaseSensitive: true }),
@@ -101,6 +122,8 @@ export function activate(context: vscode.ExtensionContext) {
 		cmd('wsm.pin', setPinned(true)),
 		cmd('wsm.unpin', setPinned(false)),
 		run('wsm.search', () => search(store, sessions, tree, view)),
+		run('wsm.filter', pickFilter),
+		run('wsm.clearFilter', () => setFilter([])),
 
 		run('wsm.export', () => vault.exportSpaces()),
 		run('wsm.import', () => vault.importSpaces()),
