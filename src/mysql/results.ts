@@ -138,7 +138,7 @@ export async function dangerous(store: Store, sessions: Sessions, node: Node, wh
 }
 
 /** Asks before running DROP/TRUNCATE/DELETE or UPDATE without WHERE. */
-async function confirmRisky(sql: string): Promise<boolean> {
+export async function confirmRisky(sql: string): Promise<boolean> {
 	const risky = riskyStatements(sql);
 	if (!risky.length) return true;
 	const list = risky.slice(0, 5).map(r => r.length > 100 ? r.slice(0, 100) + '…' : r).join('\n');
@@ -218,7 +218,7 @@ async function exportSet(index: number, format: 'csv' | 'json') {
 	vscode.window.showInformationMessage(`Esportate ${set.rows.length} righe in ${uri.fsPath}`);
 }
 
-async function primaryKey(conn: Connection, src: RowSource): Promise<string[]> {
+export async function primaryKey(conn: Connection, src: RowSource): Promise<string[]> {
 	const [keys] = await conn.query<any[]>(`SHOW KEYS FROM ${ident(src.table)} FROM ${ident(src.db)} WHERE Key_name = 'PRIMARY'`);
 	return keys.sort((a, b) => a.Seq_in_index - b.Seq_in_index).map(k => String(k.Column_name));
 }

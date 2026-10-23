@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { FileOps } from './fileOps';
+import { openExport } from './mysql/dump';
 import { chooseTarget, dangerous, editColumn, newQuery, openTable, queryStatusBar, runQuery, showCreateTable, sqlTemplate } from './mysql/results';
 import { WsmFileSystem } from './remote/fsProvider';
 import { Snapshots } from './remote/snapshots';
@@ -130,6 +131,7 @@ export function activate(context: vscode.ExtensionContext) {
 		...queryStatusBar(store),
 		cmd('wsm.openTable', n => openTable(store, sessions, n)),
 		cmd('wsm.showCreateTable', n => showCreateTable(sessions, n)),
+		cmd('wsm.exportData', n => openExport(sessions, n)),
 		cmd('wsm.newTable', n => sqlTemplate(n, 'newTable')),
 		cmd('wsm.addColumn', n => sqlTemplate(n, 'addColumn')),
 		cmd('wsm.renameTable', n => sqlTemplate(n, 'renameTable')),

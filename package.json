@@ -263,6 +263,12 @@
         "category": "WSM"
       },
       {
+        "command": "wsm.exportData",
+        "title": "Esporta (SQL, CSV, JSON)...",
+        "icon": "$(export)",
+        "category": "WSM"
+      },
+      {
         "command": "wsm.newTable",
         "title": "Nuova tabella...",
         "category": "WSM"
@@ -428,6 +434,10 @@
         },
         {
           "command": "wsm.showCreateTable",
+          "when": "false"
+        },
+        {
+          "command": "wsm.exportData",
           "when": "false"
         },
         {
@@ -676,6 +686,16 @@
           "command": "wsm.showCreateTable",
           "when": "view == wsm.spaces && viewItem == table",
           "group": "1_sql@2"
+        },
+        {
+          "command": "wsm.exportData",
+          "when": "view == wsm.spaces && viewItem =~ /^(table|database)$/",
+          "group": "1_sql@4"
+        },
+        {
+          "command": "wsm.exportData",
+          "when": "view == wsm.spaces && viewItem =~ /^(table|database)$/",
+          "group": "inline@2"
         },
         {
           "command": "wsm.addColumn",

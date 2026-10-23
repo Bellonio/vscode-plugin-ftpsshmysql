@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { columnDefinition, gridSql, ident, isReadOnly, literal, riskyStatements, rowSql, toCsv, toJson } from '../src/mysql/sqlgen';
+import { columnDefinition, createIfNotExists, gridSql, ident, insertBatch, isReadOnly, literal, riskyStatements, rowSql, toCsv, toJson, viewDefinition } from '../src/mysql/sqlgen';
 
 test('ident escapes backticks', () => {
 	assert.equal(ident('a`b'), '`a``b`');
@@ -65,4 +65,17 @@ test('columnDefinition extracts a column line from SHOW CREATE TABLE', () => {
 	const create = "CREATE TABLE `t` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `name` varchar(50) NOT NULL DEFAULT '',\n  PRIMARY KEY (`id`)\n)";
 	assert.equal(columnDefinition(create, 'name'), "varchar(50) NOT NULL DEFAULT ''");
 	assert.equal(columnDefinition(create, 'missing'), undefined);
+});
+
+test('export helpers: multi-row INSERT, CREATE IF NOT EXISTS, view without definer, CSV without header', () => {
+	assert.equal(insertBatch('t`x', ['a', 'b'], [[1, null], ["it's\x1a\\", Buffer.from([0])]], 'REPLACE'),
+		"REPLACE INTO `t``x` (`a`, `b`) VALUES\n(1, NULL),\n('it\\'s\\Z\\\\', X'00');\n");
+	const create = 'CREATE TABLE `t` (\n  `id` int NOT NULL AUTO_INCREMENT\n) ENGINE=InnoDB AUTO_INCREMENT=42 DEFAULT CHARSET=utf8mb4';
+	assert.equal(createIfNotExists(create), create.replace('CREATE TABLE', 'CREATE TABLE IF NOT EXISTS'));
+	assert.equal(createIfNotExists(create, false), 'CREATE TABLE IF NOT EXISTS `t` (\n  `id` int NOT NULL AUTO_INCREMENT\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4');
+	assert.equal(createIfNotExists('CREATE DATABASE `d` /*!40100 DEFAULT CHARACTER SET utf8mb4 */'), 'CREATE DATABASE IF NOT EXISTS `d` /*!40100 DEFAULT CHARACTER SET utf8mb4 */');
+	assert.equal(viewDefinition('CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` AS select 1'),
+		'CREATE ALGORITHM=UNDEFINED VIEW `v` AS select 1');
+	assert.equal(viewDefinition("CREATE DEFINER='u'@'%' SQL SECURITY INVOKER VIEW `v` AS select 1"), 'CREATE SQL SECURITY INVOKER VIEW `v` AS select 1');
+	assert.equal(toCsv(['a'], [['x,y']], false), '"x,y"\r\n');
 });

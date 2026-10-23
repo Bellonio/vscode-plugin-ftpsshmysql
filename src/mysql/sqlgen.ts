@@ -26,18 +26,19 @@ export function isReadOnly(sql: string): boolean {
 }
 
 /** RFC 4180 CSV (comma, CRLF). NULL becomes an empty field, binary data base64. */
-export function toCsv(columns: string[], rows: unknown[][]): string {
+export function toCsv(columns: string[], rows: unknown[][], header = true): string {
 	const field = (v: unknown) => {
 		const s = v === null || v === undefined ? '' : Buffer.isBuffer(v) ? v.toString('base64') : typeof v === 'object' ? JSON.stringify(v) : String(v);
 		return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 	};
-	return [columns, ...rows].map(r => r.map(field).join(',')).join('\r\n') + '\r\n';
+	return (header ? [columns, ...rows] : rows).map(r => r.map(field).join(',')).join('\r\n') + '\r\n';
 }
 
 /** Rows as objects keyed by column name. Binary data base64. */
-export function toJson(columns: string[], rows: unknown[][]): string {
-	return JSON.stringify(rows.map(r => Object.fromEntries(columns.map((c, i) => [c, Buffer.isBuffer(r[i]) ? (r[i] as Buffer).toString('base64') : r[i]]))), null, 2);
-}
+export const jsonRows = (columns: string[], rows: unknown[][]) =>
+	rows.map(r => Object.fromEntries(columns.map((c, i) => [c, Buffer.isBuffer(r[i]) ? (r[i] as Buffer).toString('base64') : r[i]])));
+
+export const toJson = (columns: string[], rows: unknown[][]) => JSON.stringify(jsonRows(columns, rows), null, 2);
 
 /** SQL literal for a value read with dateStrings/bigNumberStrings: NULL, numbers as-is, Buffer as X'..', the rest quoted. */
 export function literal(v: unknown): string {
@@ -45,7 +46,30 @@ export function literal(v: unknown): string {
 	if (typeof v === 'number' || typeof v === 'bigint') return String(v);
 	if (Buffer.isBuffer(v)) return `X'${v.toString('hex')}'`;
 	const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
-	return "'" + s.replace(/[\\'\0\n\r]/g, c => '\\' + ({ '\0': '0', '\n': 'n', '\r': 'r' }[c] ?? c)) + "'";
+	return "'" + s.replace(/[\\'\0\n\r\x1a]/g, c => '\\' + ({ '\0': '0', '\n': 'n', '\r': 'r', '\x1a': 'Z' }[c] ?? c)) + "'";
+}
+
+/** Dump header: backslash escaping and AUTO_INCREMENT id 0 kept whatever the server sql_mode; checks off while loading. */
+export const dumpHeader = (what: string) => `-- WebSpace Manager dump: ${what}\n-- ${new Date().toISOString()}\n\n`
+	+ "SET NAMES utf8mb4;\nSET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO';\n"
+	+ 'SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0;\nSET @OLD_UNIQUE_CHECKS=@@UNIQUE_CHECKS, UNIQUE_CHECKS=0;\n\n';
+export const dumpFooter = 'SET SQL_MODE=@OLD_SQL_MODE;\nSET FOREIGN_KEY_CHECKS=@OLD_FOREIGN_KEY_CHECKS;\nSET UNIQUE_CHECKS=@OLD_UNIQUE_CHECKS;\n';
+
+/** SHOW CREATE TABLE / DATABASE output made safe to run on an existing database, optionally without the AUTO_INCREMENT counter. */
+export const createIfNotExists = (create: string, autoIncrement = true) => {
+	const s = create.replace(/^CREATE (TABLE|DATABASE) /i, 'CREATE $1 IF NOT EXISTS ');
+	return autoIncrement ? s : s.replace(/ AUTO_INCREMENT=\d+/, '');
+};
+
+/** SHOW CREATE VIEW output without DEFINER / SQL SECURITY DEFINER: the definer user often doesn't exist on the target server. */
+export const viewDefinition = (createView: string) =>
+	createView.replace(/ DEFINER=(`(?:``|[^`])*`|'[^']*'|\S+)@(`(?:``|[^`])*`|'[^']*'|\S+)/i, '').replace(/ SQL SECURITY DEFINER/i, '');
+
+export type InsertVerb = 'INSERT' | 'INSERT IGNORE' | 'REPLACE';
+
+/** One multi-row INSERT for a block of rows read with dateStrings/bigNumberStrings. */
+export function insertBatch(table: string, columns: string[], rows: unknown[][], verb: InsertVerb = 'INSERT'): string {
+	return `${verb} INTO ${ident(table)} (${columns.map(ident).join(', ')}) VALUES\n${rows.map(r => `(${r.map(literal).join(', ')})`).join(',\n')};\n`;
 }
 
 /** Row source of a result set, so a row can be turned back into UPDATE/INSERT/DELETE. */
