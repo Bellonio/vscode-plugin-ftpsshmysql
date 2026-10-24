@@ -43,6 +43,8 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 	 */
 	private nonces = new Map<string, string>();
 	private boot = Date.now().toString(36);
+	/** Tree fetches in flight per space (see the connect refresh in the constructor). */
+	private fetching = new Map<string, Set<Promise<Node[]>>>();
 	/** Keys from `filterKeys()` selected with "Filtra" (in memory only). */
 	filter: string[] = [];
 
@@ -62,6 +64,10 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 				// The space item id changed too: refresh from the root so it comes back collapsed.
 				return this.changed.fire(undefined);
 			}
+			// ponytail: the space refresh re-fetches its expanded children; doing it while the fetch that opened the session
+			// is still in flight makes VSCode register the same child ids twice ("already registered"). Wait for it first.
+			const busy = this.fetching.get(id);
+			if (busy?.size) return void Promise.allSettled([...busy]).then(() => setTimeout(() => this.changed.fire(space)));
 			this.changed.fire(space);
 		});
 	}
@@ -272,16 +278,22 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 	}
 
 	/** Opens (or reuses) the session and turns errors into a visible message node instead of an empty folder. */
-	private async withSession(n: Node, fn: (s: Session) => Promise<Node[]>): Promise<Node[]> {
+	private withSession(n: Node, fn: (s: Session) => Promise<Node[]>): Promise<Node[]> {
 		const msg = (text: string) => [this.node({ kind: 'message', id: `${n.id}|msg`, spaceId: n.spaceId, text })];
-		try {
-			const s = await this.sessions.open(n.spaceId);
-			if (!s) return msg('Superpassword non inserita: usa "Aggiorna" su questo nodo per riprovare');
-			return await fn(s);
-		} catch (e: any) {
-			vscode.window.showErrorMessage(`${this.store.get(n.spaceId)?.name}: ${e?.message ?? e}`);
-			return msg(e?.message ?? String(e));
-		}
+		const p = (async () => {
+			try {
+				const s = await this.sessions.open(n.spaceId);
+				if (!s) return msg('Superpassword non inserita: usa "Aggiorna" su questo nodo per riprovare');
+				return await fn(s);
+			} catch (e: any) {
+				vscode.window.showErrorMessage(`${this.store.get(n.spaceId)?.name}: ${e?.message ?? e}`);
+				return msg(e?.message ?? String(e));
+			}
+		})();
+		const set = this.fetching.get(n.spaceId) ?? new Set();
+		this.fetching.set(n.spaceId, set.add(p));
+		p.finally(() => set.delete(p));
+		return p;
 	}
 }
 
