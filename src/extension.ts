@@ -7,7 +7,7 @@ import { History } from './remote/history';
 import { Snapshots } from './remote/snapshots';
 import { search } from './search';
 import { Sessions } from './session';
-import { filterKeys, moveSpace, MoveDir } from './spaces';
+import { filterKeys, groupNames, moveSpace, MoveDir } from './spaces';
 import { Store } from './store';
 import { openTelemetry } from './telemetry/panel';
 import { openTerminal } from './terminal';
@@ -68,6 +68,9 @@ export function activate(context: vscode.ExtensionContext) {
 		}))?.trim();
 		if (!remove && !name) return;
 		await store.saveAll(store.all().map(s => (s.group === n.group ? { ...s, group: name } : s)));
+		// An active filter on the old folder would otherwise hide everything.
+		const old = `group:${n.group}`;
+		if (tree.filter.includes(old)) setFilter([...new Set(tree.filter.flatMap(k => (k !== old ? [k] : name ? [`group:${name}`] : [])))]);
 	};
 	const setPinned = (pinned: boolean) => async (n: Node) => {
 		const s = n.kind === 'space' && store.get(n.spaceId);
@@ -80,7 +83,7 @@ export function activate(context: vscode.ExtensionContext) {
 	const types: Record<string, string> = { 'type:sftp': 'SFTP (SSH)', 'type:ftp': 'FTP', 'type:mysql': 'con MySQL' };
 	const setFilter = (keys: string[]) => {
 		tree.filter = keys;
-		view.description = keys.length ? `Filtro: ${keys.map(k => types[k] ?? k.slice(5)).join(', ')}` : undefined;
+		view.description = keys.length ? `Filtro: ${keys.map(k => types[k] ?? k.slice(k.indexOf(':') + 1)).join(', ')}` : undefined;
 		vscode.commands.executeCommand('setContext', 'wsm.filtered', keys.length > 0);
 		tree.refresh();
 	};
@@ -92,9 +95,10 @@ export function activate(context: vscode.ExtensionContext) {
 			({ key, label, description: `${count.get(key) ?? 0} spazi`, picked: tree.filter.includes(key) });
 		const hosts = [...count.keys()].filter(k => k.startsWith('host:')).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 		const picks = await vscode.window.showQuickPick([
-			...hosts.map(k => item(k, `$(server) ${k.slice(5)}`)),
 			...Object.entries(types).map(([k, label]) => item(k, `$(tag) ${label}`)),
-		], { title: 'Filtra spazi', placeHolder: 'Server in OR, tipi in OR, server e tipo in AND. Nessuna selezione = tutti', canPickMany: true, matchOnDescription: true });
+			...groupNames(store.all()).map(g => item(`group:${g}`, `$(folder) ${g}`)),
+			...hosts.map(k => item(k, `$(server) ${k.slice(5)}`)),
+		], { title: 'Filtra spazi', placeHolder: 'Tipi in OR, cartelle in OR, server in OR; gruppi diversi in AND. Nessuna selezione = tutti', canPickMany: true, matchOnDescription: true });
 		if (picks) setFilter(picks.map(p => p.key));
 	};
 

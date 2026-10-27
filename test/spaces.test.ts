@@ -88,3 +88,11 @@ test('applyFilter: OR inside host/type, AND across them, empty = all', () => {
 	assert.deepEqual(filterKeys({ ...l[3], mysql: [...mysql('3.3.3.3'), ...mysql('4.4.4.4'), ...mysql('localhost', true)] }),
 		['host:3.3.3.3', 'host:4.4.4.4', 'type:mysql']);
 });
+
+test('applyFilter: folders are a filter group (OR inside, AND with types)', () => {
+	const files = { protocol: 'sftp' as const, host: 'h', port: 22, user: 'u', auth: 'password' as const, rootPath: '/' };
+	const l = [{ ...sp('a', 'a', 0), group: 'Clienti' }, { ...sp('b', 'b', 1), group: 'Interni', files }, { ...sp('c', 'c', 2), files }];
+	assert.equal(ids(applyFilter(l, ['group:Clienti', 'group:Interni'])), 'a,b');
+	assert.equal(ids(applyFilter(l, ['group:Interni', 'type:sftp'])), 'b');
+	assert.deepEqual(filterKeys(l[0]), ['group:Clienti']);
+});

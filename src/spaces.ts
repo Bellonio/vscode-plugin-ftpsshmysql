@@ -119,20 +119,20 @@ export function groupNames(spaces: Space[]): string[] {
 }
 
 /**
- * Filter keys of a space: `host:<host>` for files and MySQL hosts, `type:sftp|ftp|mysql`.
+ * Filter keys of a space: `host:<host>` for files and MySQL hosts, `type:sftp|ftp|mysql`, `group:<folder>`.
  * A MySQL host reached through the SSH tunnel is relative to the server (usually localhost), so it is not a server.
  */
 export function filterKeys(s: Space): string[] {
 	const keys = [
 		s.files && `host:${s.files.host}`, ...(s.mysql ?? []).map(m => !m.viaSsh && `host:${m.host}`),
-		s.files && `type:${s.files.protocol}`, s.mysql?.length && 'type:mysql',
+		s.files && `type:${s.files.protocol}`, s.mysql?.length && 'type:mysql', s.group && `group:${s.group}`,
 	].filter((k): k is string => !!k);
 	return [...new Set(keys)];
 }
 
-/** OR inside a group (host / type), AND across groups. Empty selection = all. */
+/** OR inside a group (host / type / folder), AND across groups. Empty selection = all. */
 export function applyFilter(spaces: Space[], selected: string[]): Space[] {
-	const groups = ['host:', 'type:'].map(g => selected.filter(k => k.startsWith(g))).filter(g => g.length);
+	const groups = ['host:', 'type:', 'group:'].map(g => selected.filter(k => k.startsWith(g))).filter(g => g.length);
 	return spaces.filter(s => {
 		const keys = filterKeys(s);
 		return groups.every(g => g.some(k => keys.includes(k)));
