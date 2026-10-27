@@ -145,7 +145,10 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 			case 'group': {
 				const item = new vscode.TreeItem(n.group, C.Expanded);
 				item.id = n.id;
-				item.iconPath = vscode.ThemeIcon.Folder;
+				// Own icon and color, so folders of spaces never look like remote folders.
+				item.iconPath = new vscode.ThemeIcon('folder-library', new vscode.ThemeColor('charts.yellow'));
+				const count = applyFilter(this.store.all(), this.filter).filter(s => s.group === n.group).length; // what the folder shows
+				item.description = `${count} ${count === 1 ? 'spazio' : 'spazi'}`;
 				item.contextValue = 'group';
 				return item;
 			}
@@ -154,7 +157,7 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 				const item = new vscode.TreeItem(space?.name ?? '?', C.Collapsed);
 				item.id = this.p(n.spaceId);
 				const f = space?.files, m = space?.mysql ?? [];
-				item.iconPath = new vscode.ThemeIcon(f?.protocol === 'sftp' ? 'terminal' : f ? 'cloud' : 'database');
+				item.iconPath = new vscode.ThemeIcon(spaceIcon(space));
 				item.description = space?.pinned ? '📌' : undefined;
 				item.contextValue = ['space', space?.pinned && 'pinned', connected && 'connected'].filter(Boolean).join(':');
 				item.tooltip = [
@@ -322,6 +325,12 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 		p.finally(() => set.delete(p));
 		return p;
 	}
+}
+
+/** Codicon of a space, the same in the tree and in the search. */
+export function spaceIcon(space: Space | undefined): string {
+	const f = space?.files;
+	return f?.protocol === 'sftp' ? 'terminal' : f ? 'cloud' : 'database';
 }
 
 export function formatSize(n: number): string {
