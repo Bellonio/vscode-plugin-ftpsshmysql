@@ -29,7 +29,7 @@ export async function openTelemetry(sessions: Sessions, state: vscode.Memento, s
 
 	let caps: Caps | undefined;
 	let serverStopped = !s.isSftp;
-	let mysqlStopped = !s.space.mysql;
+	let mysqlStopped = !s.space.mysql?.length;
 	let prevCpu: CpuTimes | undefined;
 	let prevMysql: ReturnType<typeof mysqlStat>['snapshot'] | undefined;
 	let timer: NodeJS.Timeout | undefined;
@@ -78,6 +78,7 @@ export async function openTelemetry(sessions: Sessions, state: vscode.Memento, s
 	}
 
 	async function sampleMysql(session: Session) {
+		// ponytail: status of the first connection only; a connection picker in the panel if spaces with several DB servers need it.
 		const [rows] = await (await session.getMysql()).query<any[]>(MYSQL_STATUS_SQL);
 		const r = mysqlStat(rows, prevMysql);
 		prevMysql = r.snapshot;
@@ -115,13 +116,13 @@ export async function openTelemetry(sessions: Sessions, state: vscode.Memento, s
 
 	panel.webview.onDidReceiveMessage(async m => {
 		if (m.type === 'ready') {
-			if (!s.space.mysql) post({ type: 'mysql', unavailable: 'Nessun database configurato per questo spazio.' });
+			if (!s.space.mysql?.length) post({ type: 'mysql', unavailable: 'Nessun database configurato per questo spazio.' });
 			await probe(false);
 			schedule();
 			tick();
 		} else if (m.type === 'reprobe') {
 			prevCpu = undefined;
-			mysqlStopped = !s.space.mysql;
+			mysqlStopped = !s.space.mysql?.length;
 			await probe(true);
 			tick();
 		}

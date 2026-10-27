@@ -1,16 +1,17 @@
 import * as vscode from 'vscode';
-import { decryptJson, encryptJson } from '../crypto';
+import { encryptJson } from '../crypto';
 import { Session, Sessions } from '../session';
-import { FilesConfig, MysqlConfig, newId, nextOrder, SECRET_FIELDS, Secrets, Space } from '../spaces';
+import { FilesConfig, groupNames, MysqlConfig, mysqlKey, newId, nextOrder, Secrets, Space } from '../spaces';
 import { Store } from '../store';
-import { readPrivateKey, Vault } from '../vault';
+import { decryptSecrets, readPrivateKey, Vault } from '../vault';
 import { page } from './html';
 
 interface FormData {
 	name: string;
+	group?: string;
 	files?: FilesConfig;
-	mysql?: MysqlConfig;
-	/** Only the secret fields the user typed into (empty = unchanged). */
+	mysql?: MysqlConfig[];
+	/** Only the secret fields the user typed into (empty = unchanged). MySQL passwords under `mysqlKey(id)`. */
 	secrets: Secrets;
 }
 
@@ -33,8 +34,10 @@ export function openSpaceForm(ctx: { store: Store; vault: Vault; sessions: Sessi
 		try {
 			if (msg.type === 'ready') {
 				// Which fields are set is inside the encrypted blob: without the password we only know "something is stored".
-				const stored = Object.fromEntries(SECRET_FIELDS.map(f => [f, !!old?.secrets]));
-				panel.webview.postMessage({ type: 'init', space: old && { name: old.name, files: old.files, mysql: old.mysql }, stored });
+				panel.webview.postMessage({
+					type: 'init', stored: !!old?.secrets, groups: groupNames(ctx.store.all()),
+					space: old && { name: old.name, group: old.group, files: old.files, mysql: old.mysql },
+				});
 			} else if (msg.type === 'pickKey') {
 				const [uri] = (await vscode.window.showOpenDialog({ title: 'Chiave privata SSH', canSelectMany: false })) ?? [];
 				if (!uri) return;
@@ -54,28 +57,34 @@ export function openSpaceForm(ctx: { store: Store; vault: Vault; sessions: Sessi
 	});
 }
 
+const connLabel = (m: MysqlConfig, i: number) => (m.name ? `MySQL "${m.name}"` : `MySQL #${i + 1}`);
+
 function validate(d: FormData): string | undefined {
 	if (!d.name.trim()) return 'Il nome è obbligatorio.';
-	if (!d.files && !d.mysql) return 'Abilita almeno l\'accesso ai file o il database.';
+	if (!d.files && !d.mysql?.length) return 'Abilita l\'accesso ai file o aggiungi almeno una connessione MySQL.';
 	if (d.files) {
 		if (!d.files.host || !d.files.user) return 'File: host e utente sono obbligatori.';
 		if (!(d.files.port > 0 && d.files.port < 65536)) return 'File: porta non valida.';
 		if (!d.files.rootPath.startsWith('/')) return 'File: la root path deve iniziare con /';
 	}
-	if (d.mysql) {
-		if (!d.mysql.host || !d.mysql.user) return 'MySQL: host e utente sono obbligatori.';
-		if (!(d.mysql.port > 0 && d.mysql.port < 65536)) return 'MySQL: porta non valida.';
-		if (d.mysql.viaSsh && d.files?.protocol !== 'sftp') return 'MySQL: il tunnel richiede un accesso file di tipo SFTP.';
+	const ids = new Set<string>();
+	for (const [i, m] of (d.mysql ?? []).entries()) {
+		const l = connLabel(m, i);
+		if (typeof m.id !== 'string' || !m.id || ids.has(m.id)) return `${l}: identificativo non valido.`;
+		ids.add(m.id);
+		if (!m.host || !m.user) return `${l}: host e utente sono obbligatori.`;
+		if (!(m.port > 0 && m.port < 65536)) return `${l}: porta non valida.`;
+		if (m.viaSsh && d.files?.protocol !== 'sftp') return `${l}: il tunnel richiede un accesso file di tipo SFTP.`;
 	}
 }
 
-/** Keeps only the secrets the config actually uses. */
+/** Keeps only the secrets the config actually uses (drops passwords of removed connections and the legacy key). */
 function prune(s: Secrets, d: Pick<FormData, 'files' | 'mysql'>): Secrets {
 	const out: Secrets = {};
 	if (d.files && (d.files.protocol === 'ftp' || d.files.auth === 'password')) out.filesPassword = s.filesPassword;
 	if (d.files?.protocol === 'sftp' && d.files.auth === 'key') { out.privateKey = s.privateKey; out.passphrase = s.passphrase; }
-	if (d.mysql) out.mysqlPassword = s.mysqlPassword;
-	return Object.fromEntries(Object.entries(out).filter(([, v]) => v)) as Secrets;
+	for (const m of d.mysql ?? []) out[mysqlKey(m.id)] = s[mysqlKey(m.id)];
+	return typed(out);
 }
 
 const typed = (s: Secrets) => Object.fromEntries(Object.entries(s).filter(([, v]) => v)) as Secrets;
@@ -83,20 +92,23 @@ const typed = (s: Secrets) => Object.fromEntries(Object.entries(s).filter(([, v]
 async function save(ctx: { store: Store; vault: Vault; sessions: Sessions }, old: Space | undefined, d: FormData): Promise<boolean> {
 	const changed = typed(d.secrets);
 	let secrets = old?.secrets ?? '';
-	if (Object.keys(changed).length) {
+	// A removed connection must take its password out of the blob too: that needs the key, like a changed secret.
+	const removed = (old?.mysql ?? []).some(m => !d.mysql?.some(n => n.id === m.id));
+	if (Object.keys(changed).length || (removed && secrets)) {
 		const key = await ctx.vault.askKey(`salvare le credenziali di "${d.name}"`);
 		if (!key) return false;
-		const merged = { ...(old?.secrets ? decryptJson<Secrets>(key, old.secrets) : {}), ...changed };
+		const merged = { ...(old?.secrets ? decryptSecrets(key, old.secrets) : {}), ...changed };
 		const kept = prune(merged, d);
 		secrets = Object.keys(kept).length ? encryptJson(key, kept) : '';
 	}
 	const space: Space = {
 		id: old?.id ?? newId(),
 		name: d.name.trim(),
+		group: d.group?.trim() || undefined,
 		pinned: old?.pinned ?? false,
 		order: old?.order ?? nextOrder(ctx.store.all()),
 		files: d.files,
-		mysql: d.mysql,
+		mysql: d.mysql?.length ? d.mysql : undefined,
 		secrets,
 	};
 	if (old) ctx.sessions.close(old.id); // new config/credentials apply on next connect
@@ -110,7 +122,7 @@ async function test(ctx: { vault: Vault; state: vscode.Memento }, old: Space | u
 	if (old?.secrets) {
 		const key = await ctx.vault.askKey('testare la connessione');
 		if (!key) return;
-		secrets = { ...decryptJson<Secrets>(key, old.secrets), ...secrets };
+		secrets = { ...decryptSecrets(key, old.secrets), ...secrets };
 	}
 	const s = new Session({ id: 'test', name: d.name, pinned: false, order: 0, files: d.files, mysql: d.mysql, secrets: '' }, secrets, ctx.state);
 	const report: string[] = [];
@@ -123,11 +135,11 @@ async function test(ctx: { vault: Vault; state: vscode.Memento }, old: Space | u
 				report.push(`File: OK (${n} elementi in ${d.files.rootPath})`);
 			} catch (e: any) { ok = false; report.push(`File: ${e?.message ?? e}`); }
 		}
-		if (d.mysql) {
+		for (const [i, m] of (d.mysql ?? []).entries()) {
 			try {
-				const [rows] = await (await s.getMysql()).query<any[]>('SELECT VERSION() AS v');
-				report.push(`MySQL: OK (versione ${rows[0]?.v})`);
-			} catch (e: any) { ok = false; report.push(`MySQL: ${e?.message ?? e}`); }
+				const [rows] = await (await s.getMysql(m.id)).query<any[]>('SELECT VERSION() AS v');
+				report.push(`${connLabel(m, i)}: OK (versione ${rows[0]?.v})`);
+			} catch (e: any) { ok = false; report.push(`${connLabel(m, i)}: ${e?.message ?? e}`); }
 		}
 	} finally {
 		s.dispose();
@@ -137,12 +149,21 @@ async function test(ctx: { vault: Vault; state: vscode.Memento }, old: Space | u
 
 function html(webview: vscode.Webview): string {
 	const css = `
-form { max-width: 640px; }
-fieldset { border: 1px solid var(--vscode-panel-border); margin: 14px 0; padding: 10px 14px; }
+form { max-width: 680px; }
+fieldset { border: 1px solid var(--vscode-panel-border); border-radius: 4px; margin: 16px 0; padding: 10px 14px 12px; }
 legend { padding: 0 6px; font-weight: 600; }
 label.row { display: grid; grid-template-columns: 150px 1fr; align-items: center; gap: 10px; margin: 6px 0; }
 label.check { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
 input[type=text], input[type=password], input[type=number], select { width: 100%; }
+.hostPort { display: grid; grid-template-columns: 1fr 150px; gap: 10px; }
+.hostPort label.row:last-child { grid-template-columns: auto 1fr; }
+#mysqlList { counter-reset: conn; }
+.card { counter-increment: conn; border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 8px 12px; margin: 10px 0; background: var(--vscode-sideBar-background, transparent); }
+.cardHead { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.cardHead .num::before { content: '#' counter(conn); font-weight: 600; }
+.cardHead .num { min-width: 28px; }
+.cardHead button { padding: 4px 10px; }
+#mysqlEmpty { margin: 6px 0; }
 .actions { display: flex; gap: 8px; margin-top: 16px; }
 #status { white-space: pre-wrap; margin-top: 12px; }
 .hidden { display: none !important; }`;
@@ -150,12 +171,13 @@ input[type=text], input[type=password], input[type=number], select { width: 100%
 <h2 id="title">Spazio</h2>
 <form id="f" autocomplete="off">
 <label class="row">Nome <input type="text" id="name" required></label>
+<label class="row">Cartella <input type="text" id="group" list="groups" placeholder="nessuna (scegli o scrivi un nome nuovo)"></label>
+<datalist id="groups"></datalist>
 
 <fieldset><legend><label class="check"><input type="checkbox" id="filesOn" checked> Accesso ai file</label></legend>
 <div id="filesBox">
 	<label class="row">Protocollo <select id="protocol"><option value="sftp">SFTP (SSH)</option><option value="ftp">FTP</option></select></label>
-	<label class="row">Host <input type="text" id="host"></label>
-	<label class="row">Porta <input type="number" id="port" value="22"></label>
+	<div class="hostPort"><label class="row">Host <input type="text" id="host"></label><label class="row">Porta <input type="number" id="port" value="22"></label></div>
 	<label class="row">Utente <input type="text" id="user"></label>
 	<label class="row sftpOnly">Autenticazione <select id="auth"><option value="password">Password</option><option value="key">Chiave privata</option></select></label>
 	<label class="row pwOnly">Password <input type="password" id="filesPassword"></label>
@@ -169,15 +191,21 @@ input[type=text], input[type=password], input[type=number], select { width: 100%
 	<label class="check"><input type="checkbox" id="showHidden"> Mostra file nascosti</label>
 </div></fieldset>
 
-<fieldset><legend><label class="check"><input type="checkbox" id="mysqlOn"> Database MySQL</label></legend>
-<div id="mysqlBox">
-	<label class="check sftpOnly"><input type="checkbox" id="viaSsh" checked> Tramite tunnel SSH dello spazio</label>
-	<label class="row">Host <input type="text" id="mHost" value="127.0.0.1"></label>
-	<label class="row">Porta <input type="number" id="mPort" value="3306"></label>
-	<label class="row">Utente <input type="text" id="mUser"></label>
-	<label class="row">Password <input type="password" id="mysqlPassword"></label>
-	<label class="row">Database (opzionale) <input type="text" id="database"></label>
-</div></fieldset>
+<fieldset id="mysqlBox"><legend>Database MySQL</legend>
+	<div id="mysqlList"></div>
+	<p id="mysqlEmpty" class="muted">Nessuna connessione MySQL.</p>
+	<button type="button" class="secondary" id="addMysql">+ Aggiungi connessione MySQL</button>
+</fieldset>
+
+<template id="mysqlTpl"><div class="card">
+	<div class="cardHead"><span class="num"></span><input type="text" class="mName" placeholder="Nome connessione (opzionale, es. produzione)">
+		<button type="button" class="secondary mRemove" title="Rimuovi questa connessione">Rimuovi</button></div>
+	<label class="check sftpOnly"><input type="checkbox" class="mViaSsh" checked> Tramite tunnel SSH dello spazio</label>
+	<div class="hostPort"><label class="row">Host <input type="text" class="mHost" value="127.0.0.1"></label><label class="row">Porta <input type="number" class="mPort" value="3306"></label></div>
+	<label class="row">Utente <input type="text" class="mUser"></label>
+	<label class="row">Password <input type="password" class="mPassword"></label>
+	<label class="row">Database (opzionale) <input type="text" class="mDatabase"></label>
+</div></template>
 
 <p class="muted">Le password e la chiave vengono cifrate con la superpassword. In modifica, lascia vuoti i campi segreti per non cambiarli.</p>
 <div class="actions"><button type="submit">Salva</button><button type="button" class="secondary" id="test">Test connessione</button></div>
@@ -192,31 +220,56 @@ $('port').addEventListener('input', () => portTouched = true);
 function sync() {
 	const sftp = $('protocol').value === 'sftp', key = $('auth').value === 'key';
 	$('filesBox').classList.toggle('hidden', !$('filesOn').checked);
-	$('mysqlBox').classList.toggle('hidden', !$('mysqlOn').checked);
 	const sftpFiles = sftp && $('filesOn').checked;
 	document.querySelectorAll('.sftpOnly').forEach(e => e.classList.toggle('hidden', e.closest('#mysqlBox') ? !sftpFiles : !sftp));
 	document.querySelectorAll('.ftpOnly').forEach(e => e.classList.toggle('hidden', sftp));
 	document.querySelectorAll('.ftpsOnly').forEach(e => e.classList.toggle('hidden', sftp || !$('ftps').checked));
 	document.querySelectorAll('.keyOnly').forEach(e => e.classList.toggle('hidden', !(sftp && key)));
 	document.querySelectorAll('.pwOnly').forEach(e => e.classList.toggle('hidden', sftp && key));
+	$('mysqlEmpty').classList.toggle('hidden', !!$('mysqlList').children.length);
 }
-['filesOn', 'mysqlOn', 'protocol', 'auth', 'ftps'].forEach(id => $(id).addEventListener('change', sync));
+['filesOn', 'protocol', 'auth', 'ftps'].forEach(id => $(id).addEventListener('change', sync));
 $('protocol').addEventListener('change', () => { if (!portTouched) $('port').value = $('protocol').value === 'sftp' ? 22 : 21; });
 
+/** Adds a MySQL card; m = saved connection (its password stays unchanged when the field is left empty). */
+function addMysql(m, stored) {
+	const card = $('mysqlTpl').content.firstElementChild.cloneNode(true);
+	const q = c => card.querySelector('.' + c);
+	card.dataset.id = m?.id ?? crypto.randomUUID();
+	if (m) {
+		q('mName').value = m.name ?? ''; q('mViaSsh').checked = !!m.viaSsh; q('mHost').value = m.host; q('mPort').value = m.port;
+		q('mUser').value = m.user; q('mDatabase').value = m.database ?? '';
+		if (stored) q('mPassword').placeholder = '(invariata se vuoto)';
+	}
+	q('mRemove').addEventListener('click', () => { card.remove(); sync(); });
+	$('mysqlList').appendChild(card);
+	sync();
+	return card;
+}
+$('addMysql').addEventListener('click', () => addMysql().querySelector('.mUser').focus());
+
 function collect() {
-	const sftp = $('protocol').value === 'sftp';
+	const sftp = $('protocol').value === 'sftp', filesOn = $('filesOn').checked;
+	const secrets = { filesPassword: $('filesPassword').value, passphrase: $('passphrase').value };
+	const mysql = [...$('mysqlList').children].map(card => {
+		const q = c => card.querySelector('.' + c);
+		secrets['mysqlPassword:' + card.dataset.id] = q('mPassword').value;
+		return {
+			id: card.dataset.id, name: q('mName').value.trim() || undefined,
+			host: q('mHost').value.trim(), port: Number(q('mPort').value), user: q('mUser').value.trim(),
+			database: q('mDatabase').value.trim() || undefined, viaSsh: sftp && filesOn && q('mViaSsh').checked,
+		};
+	});
 	return {
 		name: $('name').value,
-		files: $('filesOn').checked ? {
+		group: $('group').value.trim() || undefined,
+		files: filesOn ? {
 			protocol: $('protocol').value, host: $('host').value.trim(), port: Number($('port').value), user: $('user').value.trim(),
 			auth: sftp ? $('auth').value : 'password', rootPath: $('rootPath').value.trim() || '/',
 			ftps: !sftp && $('ftps').checked, ftpsInsecure: !sftp && $('ftps').checked && $('ftpsInsecure').checked, showHidden: $('showHidden').checked,
 		} : undefined,
-		mysql: $('mysqlOn').checked ? {
-			host: $('mHost').value.trim(), port: Number($('mPort').value), user: $('mUser').value.trim(),
-			database: $('database').value.trim() || undefined, viaSsh: sftp && $('filesOn').checked && $('viaSsh').checked,
-		} : undefined,
-		secrets: { filesPassword: $('filesPassword').value, passphrase: $('passphrase').value, mysqlPassword: $('mysqlPassword').value },
+		mysql: mysql.length ? mysql : undefined,
+		secrets,
 	};
 }
 
@@ -230,21 +283,21 @@ window.addEventListener('message', ({ data: m }) => {
 	if (m.type === 'init') {
 		const s = m.space;
 		$('title').textContent = s ? 'Modifica spazio' : 'Nuovo spazio';
+		for (const g of m.groups) { const o = document.createElement('option'); o.value = g; $('groups').appendChild(o); }
 		if (s) {
 			$('name').value = s.name;
+			$('group').value = s.group ?? '';
 			$('filesOn').checked = !!s.files;
 			if (s.files) {
 				portTouched = true;
 				for (const k of ['protocol', 'host', 'port', 'user', 'auth', 'rootPath']) $(k).value = s.files[k] ?? '';
 				$('ftps').checked = !!s.files.ftps; $('ftpsInsecure').checked = !!s.files.ftpsInsecure; $('showHidden').checked = !!s.files.showHidden;
 			}
-			$('mysqlOn').checked = !!s.mysql;
-			if (s.mysql) {
-				$('mHost').value = s.mysql.host; $('mPort').value = s.mysql.port; $('mUser').value = s.mysql.user;
-				$('database').value = s.mysql.database ?? ''; $('viaSsh').checked = !!s.mysql.viaSsh;
+			for (const c of s.mysql ?? []) addMysql(c, m.stored);
+			if (m.stored) {
+				for (const f of ['filesPassword', 'passphrase']) $(f).placeholder = '(invariata se vuoto)';
+				$('keyName').textContent = '(invariata se non scegli un nuovo file)';
 			}
-			for (const f of ['filesPassword', 'passphrase', 'mysqlPassword']) if (m.stored[f]) $(f).placeholder = '(invariata se vuoto)';
-			if (m.stored.privateKey) $('keyName').textContent = '(invariata se non scegli un nuovo file)';
 		}
 		sync();
 		$('name').focus();

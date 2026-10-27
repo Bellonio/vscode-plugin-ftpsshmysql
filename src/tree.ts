@@ -2,20 +2,22 @@ import * as vscode from 'vscode';
 import { posix } from 'node:path';
 import { Entry, normalize } from './remote/remoteFs';
 import { Session, Sessions } from './session';
-import { applyFilter, SortMode, sortSpaces, Space } from './spaces';
+import { applyFilter, groupNames, MysqlConfig, SortMode, sortSpaces, Space } from './spaces';
 import { Store } from './store';
 
 export type Node =
+	/** Sidebar folder (`Space.group`): it belongs to no space, so spaceId is empty. */
+	| { kind: 'group'; id: string; spaceId: ''; group: string }
 	| { kind: 'space'; id: string; spaceId: string }
 	| { kind: 'filesRoot'; id: string; spaceId: string; path: string }
 	| { kind: 'entry'; id: string; spaceId: string; path: string; entry: Entry }
 	| { kind: 'terminal'; id: string; spaceId: string }
 	| { kind: 'telemetry'; id: string; spaceId: string }
-	| { kind: 'db'; id: string; spaceId: string }
-	| { kind: 'database'; id: string; spaceId: string; database: string }
-	| { kind: 'table'; id: string; spaceId: string; database: string; table: string }
+	| { kind: 'db'; id: string; spaceId: string; connId: string }
+	| { kind: 'database'; id: string; spaceId: string; connId: string; database: string }
+	| { kind: 'table'; id: string; spaceId: string; connId: string; database: string; table: string }
 	/** Column or index of a table (read-only info). */
-	| { kind: 'tableInfo'; id: string; spaceId: string; database: string; table: string; text: string; description: string; tooltip: string; icon: string; contextValue: string }
+	| { kind: 'tableInfo'; id: string; spaceId: string; connId: string; database: string; table: string; text: string; description: string; tooltip: string; icon: string; contextValue: string }
 	| { kind: 'message'; id: string; spaceId: string; text: string };
 
 export const fileUri = (spaceId: string, path: string) => vscode.Uri.from({ scheme: 'wsm', authority: spaceId, path });
@@ -91,6 +93,11 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 		return this.node({ kind: 'space', id: spaceId, spaceId });
 	}
 
+	/** Folders do no I/O, so their id is stable and VSCode remembers whether they are expanded. */
+	groupNode(group: string) {
+		return this.node({ kind: 'group', id: `group:${group}`, spaceId: '', group });
+	}
+
 	filesRootNode(space: Space) {
 		return this.node({ kind: 'filesRoot', id: `${this.p(space.id)}|files`, spaceId: space.id, path: normalize(space.files!.rootPath || '/') });
 	}
@@ -107,18 +114,26 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 		return path === root.path ? root : this.nodes.get(`${this.p(spaceId)}|f|${path}`);
 	}
 
-	/** The "DB" node of a space, if the view has already created it. */
-	dbNode(spaceId: string): Node | undefined {
-		return this.nodes.get(`${this.p(spaceId)}|db`);
+	/** The "DB" node of a MySQL connection, if the view has already created it. */
+	dbNode(spaceId: string, connId: string): Node | undefined {
+		return this.nodes.get(this.dbId(spaceId, connId));
+	}
+
+	private dbId(spaceId: string, connId: string, ...rest: string[]) {
+		return [`${this.p(spaceId)}|db`, connId, ...rest].join('|');
 	}
 
 	getParent(n: Node): Node | undefined {
 		switch (n.kind) {
-			case 'space': return undefined;
+			case 'group': return undefined;
+			case 'space': {
+				const g = this.store.get(n.spaceId)?.group;
+				return g ? this.groupNode(g) : undefined;
+			}
 			case 'entry': return this.dirNode(n.spaceId, posix.dirname(n.path));
-			case 'database': return this.nodes.get(`${this.p(n.spaceId)}|db`);
-			case 'table': return this.nodes.get(`${this.p(n.spaceId)}|db|${n.database}`);
-			case 'tableInfo': return this.nodes.get(`${this.p(n.spaceId)}|db|${n.database}|${n.table}`);
+			case 'database': return this.dbNode(n.spaceId, n.connId);
+			case 'table': return this.nodes.get(this.dbId(n.spaceId, n.connId, n.database));
+			case 'tableInfo': return this.nodes.get(this.dbId(n.spaceId, n.connId, n.database, n.table));
 			default: return this.spaceNode(n.spaceId);
 		}
 	}
@@ -127,25 +142,32 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 		const C = vscode.TreeItemCollapsibleState;
 		const space = this.store.get(n.spaceId);
 		switch (n.kind) {
+			case 'group': {
+				const item = new vscode.TreeItem(n.group, C.Expanded);
+				item.id = n.id;
+				item.iconPath = vscode.ThemeIcon.Folder;
+				item.contextValue = 'group';
+				return item;
+			}
 			case 'space': {
 				const connected = !!this.sessions.get(n.spaceId);
 				const item = new vscode.TreeItem(space?.name ?? '?', C.Collapsed);
 				item.id = this.p(n.spaceId);
-				const f = space?.files, m = space?.mysql;
+				const f = space?.files, m = space?.mysql ?? [];
 				item.iconPath = new vscode.ThemeIcon(f?.protocol === 'sftp' ? 'terminal' : f ? 'cloud' : 'database');
 				item.description = space?.pinned ? '📌' : undefined;
 				item.contextValue = ['space', space?.pinned && 'pinned', connected && 'connected'].filter(Boolean).join(':');
 				item.tooltip = [
 					space?.name,
 					f && `${f.protocol === 'sftp' ? 'SFTP' : f.ftps ? 'FTPS' : 'FTP'} ${f.user}@${f.host}:${f.port}`,
-					m && `MySQL ${m.user}@${m.host}:${m.port}${m.viaSsh ? ' (tunnel SSH)' : ''}`,
-					connected ? 'Connesso' : !m ? 'Non connesso: espandi per connetterti' : f ? 'Non connesso: espandi "File" o "DB" per connetterti' : 'Non connesso: espandi "DB" per connetterti',
+					...m.map(c => `MySQL ${c.name ? c.name + ': ' : ''}${c.user}@${c.host}:${c.port}${c.viaSsh ? ' (tunnel SSH)' : ''}`),
+					connected ? 'Connesso' : !m.length ? 'Non connesso: espandi per connetterti' : f ? 'Non connesso: espandi "File" o "DB" per connetterti' : 'Non connesso: espandi "DB" per connetterti',
 				].filter(Boolean).join('\n');
 				return item;
 			}
 			case 'filesRoot': {
 				const f = space!.files!;
-				const item = new vscode.TreeItem(`File (${f.protocol.toUpperCase()}${f.ftps ? 'S' : ''})`, space!.mysql ? C.Collapsed : C.Expanded);
+				const item = new vscode.TreeItem(`File (${f.protocol.toUpperCase()}${f.ftps ? 'S' : ''})`, space!.mysql?.length ? C.Collapsed : C.Expanded);
 				item.id = n.id;
 				item.description = n.path;
 				item.iconPath = new vscode.ThemeIcon('root-folder');
@@ -180,8 +202,9 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 				return item;
 			}
 			case 'db': {
-				const m = space!.mysql!;
-				const item = new vscode.TreeItem('DB MySQL', C.Collapsed);
+				const all = space!.mysql ?? [];
+				const m = all.find(c => c.id === n.connId) ?? ({} as MysqlConfig);
+				const item = new vscode.TreeItem(all.length > 1 ? `DB ${m.name || m.database || m.host}` : 'DB MySQL', C.Collapsed);
 				item.id = n.id;
 				item.description = `${m.user}@${m.host}${m.viaSsh ? ' (tunnel SSH)' : ''}`;
 				item.iconPath = new vscode.ThemeIcon('database');
@@ -223,16 +246,20 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 	}
 
 	async getChildren(n?: Node): Promise<Node[]> {
-		if (!n) return sortSpaces(applyFilter(this.store.all(), this.filter), sortMode()).map(s => this.spaceNode(s.id));
+		if (!n || n.kind === 'group') {
+			const shown = sortSpaces(applyFilter(this.store.all(), this.filter), sortMode());
+			if (n) return shown.filter(s => s.group === n.group).map(s => this.spaceNode(s.id));
+			return [...groupNames(shown).map(g => this.groupNode(g)), ...shown.filter(s => !s.group).map(s => this.spaceNode(s.id))];
+		}
 		const space = this.store.get(n.spaceId);
 		if (!space) return [];
 		switch (n.kind) {
 			case 'space': {
 				const out: Node[] = [];
 				if (space.files?.protocol === 'sftp') out.push(this.node({ kind: 'terminal', id: `${this.p(space.id)}|term`, spaceId: space.id }));
-				if (space.files?.protocol === 'sftp' || space.mysql) out.push(this.node({ kind: 'telemetry', id: `${this.p(space.id)}|tele`, spaceId: space.id }));
+				if (space.files?.protocol === 'sftp' || space.mysql?.length) out.push(this.node({ kind: 'telemetry', id: `${this.p(space.id)}|tele`, spaceId: space.id }));
 				if (space.files) out.push(this.filesRootNode(space));
-				if (space.mysql) out.push(this.node({ kind: 'db', id: `${this.p(space.id)}|db`, spaceId: space.id }));
+				for (const m of space.mysql ?? []) out.push(this.node({ kind: 'db', id: this.dbId(space.id, m.id), spaceId: space.id, connId: m.id }));
 				return out;
 			}
 			case 'filesRoot':
@@ -240,26 +267,26 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 				return this.withSession(n, async s => (await s.list(n.path)).map(e => this.entryNode(space.id, e)));
 			case 'db':
 				return this.withSession(n, async s => {
-					const [rows] = await (await s.getMysql()).query<any[]>({ sql: 'SHOW DATABASES', rowsAsArray: true });
+					const [rows] = await (await s.getMysql(n.connId)).query<any[]>({ sql: 'SHOW DATABASES', rowsAsArray: true });
 					const dbs = rows.map(r => String(r[0]));
-					const only = space.mysql?.database;
+					const only = space.mysql?.find(m => m.id === n.connId)?.database;
 					return (only && dbs.includes(only) ? [only, ...dbs.filter(d => d !== only)] : dbs)
-						.map(d => this.node({ kind: 'database', id: `${this.p(space.id)}|db|${d}`, spaceId: space.id, database: d }));
+						.map(d => this.node({ kind: 'database', id: this.dbId(space.id, n.connId, d), spaceId: space.id, connId: n.connId, database: d }));
 				});
 			case 'database':
 				return this.withSession(n, async s => {
-					const conn = await s.getMysql();
+					const conn = await s.getMysql(n.connId);
 					const [rows] = await conn.query<any[]>({ sql: `SHOW FULL TABLES FROM ${conn.escapeId(n.database)}`, rowsAsArray: true });
-					return rows.map(r => this.node({ kind: 'table', id: `${this.p(space.id)}|db|${n.database}|${r[0]}`, spaceId: space.id, database: n.database, table: String(r[0]) }));
+					return rows.map(r => this.node({ kind: 'table', id: this.dbId(space.id, n.connId, n.database, String(r[0])), spaceId: space.id, connId: n.connId, database: n.database, table: String(r[0]) }));
 				});
 			case 'table':
 				return this.withSession(n, async s => {
-					const conn = await s.getMysql();
+					const conn = await s.getMysql(n.connId);
 					const from = `FROM ${conn.escapeId(n.table)} FROM ${conn.escapeId(n.database)}`;
 					const [cols] = await conn.query<any[]>(`SHOW FULL COLUMNS ${from}`);
 					const [idx] = await conn.query<any[]>(`SHOW INDEX ${from}`);
 					const info = (key: string, text: string, description: string, tooltip: string, icon: string, contextValue: string) =>
-						this.node({ kind: 'tableInfo', id: `${n.id}|${key}`, spaceId: n.spaceId, database: n.database, table: n.table, text, description, tooltip, icon, contextValue });
+						this.node({ kind: 'tableInfo', id: `${n.id}|${key}`, spaceId: n.spaceId, connId: n.connId, database: n.database, table: n.table, text, description, tooltip, icon, contextValue });
 					const indexes = new Map<string, any[]>();
 					for (const r of idx) indexes.set(r.Key_name, [...(indexes.get(r.Key_name) ?? []), r]);
 					return [

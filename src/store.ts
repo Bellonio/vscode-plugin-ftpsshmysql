@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Space } from './spaces';
+import { normalizeSpace, Space } from './spaces';
 
 const KEY = 'wsm.spaces';
 
@@ -11,7 +11,7 @@ export class Store {
 	constructor(private state: vscode.Memento) {}
 
 	all(): Space[] {
-		return this.state.get<Space[]>(KEY, []);
+		return this.state.get<Space[]>(KEY, []).map(normalizeSpace);
 	}
 
 	get(id: string): Space | undefined {

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createMeta, decryptJson, encryptJson, unlock, VaultMeta } from './crypto';
-import { newId, nextOrder, SECRET_FIELDS, Secrets, Space, stripSecrets } from './spaces';
+import { baseField, migrateSecrets, newId, nextOrder, normalizeSpace, SECRET_FIELDS, SecretField, Secrets, Space, stripSecrets } from './spaces';
 import { Store } from './store';
 
 const META_KEY = 'wsm.vault.meta';
@@ -17,9 +17,14 @@ interface ExportFile {
 	shared?: boolean;
 }
 
-const SECRET_LABELS: Record<keyof Secrets, string> = {
+const SECRET_LABELS: Record<SecretField, string> = {
 	filesPassword: 'Password FTP/SSH', privateKey: 'Chiave privata SSH', passphrase: 'Passphrase della chiave', mysqlPassword: 'Password MySQL',
 };
+
+/** Decrypts a secrets blob, upgrading the old single MySQL password. */
+export function decryptSecrets(key: Buffer, blob: string): Secrets {
+	return migrateSecrets(decryptJson<Secrets>(key, blob));
+}
 
 /**
  * Master password handling. The password and derived key are never stored: every unlock prompts again,
@@ -42,7 +47,7 @@ export class Vault {
 	async unlockSecrets(space: Space): Promise<Secrets | undefined> {
 		if (!space.secrets) return {};
 		const key = await this.askKey(`connettere "${space.name}"`);
-		return key && decryptJson<Secrets>(key, space.secrets);
+		return key && decryptSecrets(key, space.secrets);
 	}
 
 	private async createVault(): Promise<Buffer | undefined> {
@@ -76,9 +81,9 @@ export class Vault {
 			{ title: 'Spazi da consegnare', canPickMany: true, ignoreFocusOut: true });
 		if (!picked?.length) return;
 		const strip = await vscode.window.showQuickPick([
-			{ label: 'Chiave privata SSH e passphrase', picked: true, fields: ['privateKey', 'passphrase'] as (keyof Secrets)[] },
-			{ label: 'Password FTP/SSH', fields: ['filesPassword'] as (keyof Secrets)[] },
-			{ label: 'Password MySQL', fields: ['mysqlPassword'] as (keyof Secrets)[] },
+			{ label: 'Chiave privata SSH e passphrase', picked: true, fields: ['privateKey', 'passphrase'] as SecretField[] },
+			{ label: 'Password FTP/SSH', fields: ['filesPassword'] as SecretField[] },
+			{ label: 'Password MySQL (tutte le connessioni)', fields: ['mysqlPassword'] as SecretField[] },
 		], { title: 'Segreti da togliere (il collega li inserirà all\'import)', canPickMany: true, ignoreFocusOut: true });
 		if (!strip) return;
 		const spaces = picked.map(p => p.space);
@@ -93,7 +98,7 @@ export class Vault {
 			vscode.window.showWarningMessage('È la tua superpassword: scegline una diversa per il collega.');
 		}
 		const { meta: shareMeta, key } = await createMeta(pw);
-		const stripped = stripSecrets(spaces.map(s => (s.secrets ? decryptJson<Secrets>(myKey!, s.secrets) : {})), strip.flatMap(p => p.fields));
+		const stripped = stripSecrets(spaces.map(s => (s.secrets ? decryptSecrets(myKey!, s.secrets) : {})), strip.flatMap(p => p.fields));
 		const out = spaces.map((s, i) => {
 			const { kept, missing } = stripped[i];
 			return { ...s, secrets: Object.keys(kept).length ? encryptJson(key, kept) : '', missing: Object.keys(missing).length ? missing : undefined };
@@ -120,6 +125,7 @@ export class Vault {
 				!(v.N >= 2 ** 14 && v.N <= 2 ** 20) || !(v.r >= 1 && v.r <= 16) || !(v.p >= 1 && v.p <= 4) ||
 				128 * v.N * v.r > 512 * 1024 * 1024) throw new Error();
 			if (!file.spaces.every(validSpace)) throw new Error();
+			file.spaces = file.spaces.map(normalizeSpace);
 		} catch {
 			return void vscode.window.showErrorMessage('File non valido: non è un export di WebSpace Manager.');
 		}
@@ -192,11 +198,11 @@ export class Vault {
 		const out = spaces.map(s => {
 			const secrets: Secrets = s.secrets ? decryptJson<Secrets>(fileKey!, s.secrets) : {};
 			for (const [f, id] of Object.entries(s.missing ?? {}) as [keyof Secrets, string][]) {
-				const v = given.get(`${f}\0${id}`);
+				const v = given.get(`${baseField(f)}\0${id}`);
 				if (v) secrets[f] = v;
 				else if (!incomplete.includes(s.name)) incomplete.push(s.name);
 			}
-			return { ...s, secrets: Object.keys(secrets).length ? encryptJson(localKey, secrets) : '' };
+			return { ...s, secrets: Object.keys(secrets).length ? encryptJson(localKey, migrateSecrets(secrets)) : '' };
 		});
 		return { spaces: out, incomplete };
 	}
@@ -232,12 +238,18 @@ function validSpace(s: any): s is Space {
 	const port = (v: unknown) => Number.isInteger(v) && (v as number) > 0 && (v as number) < 65536;
 	const files = s?.files;
 	const mysql = s?.mysql;
+	const db = (m: any) => !!m && str(m.host) && str(m.user) && port(m.port) && (m.name === undefined || str(m.name));
+	// Connection ids end up in tree node ids: they must be unique, or the view registers the same id twice.
+	const conns = (l: any[]) => l.every(m => db(m) && str(m.id) && m.id !== '') && new Set(l.map(m => m.id)).size === l.length;
+	// Only MySQL passwords have a per-connection suffix (`mysqlPassword:<id>`).
+	const secretKey = (k: string) => SECRET_FIELDS.includes(baseField(k)) && (k === baseField(k) || baseField(k) === 'mysqlPassword');
 	return !!s && str(s.id) && str(s.name) && s.name.trim() !== '' && str(s.secrets ?? '') &&
 		(files === undefined || (['sftp', 'ftp'].includes(files.protocol) && ['password', 'key'].includes(files.auth) &&
 			str(files.host) && str(files.user) && port(files.port) && str(files.rootPath) && files.rootPath.startsWith('/'))) &&
-		(mysql === undefined || (str(mysql.host) && str(mysql.user) && port(mysql.port))) &&
+		(mysql === undefined || (Array.isArray(mysql) ? conns(mysql) : db(mysql))) &&
+		(s.group === undefined || str(s.group)) &&
 		(s.missing === undefined || (typeof s.missing === 'object' && s.missing !== null &&
-			Object.entries(s.missing).every(([k, v]) => SECRET_FIELDS.includes(k as keyof Secrets) && str(v))));
+			Object.entries(s.missing).every(([k, v]) => secretKey(k) && str(v))));
 }
 
 async function writeExport(file: ExportFile, baseName: string): Promise<boolean> {
@@ -253,13 +265,14 @@ async function writeExport(file: ExportFile, baseName: string): Promise<boolean>
 
 /** Asks each removed secret once per group (same value in the sender's spaces), naming the spaces that use it. Esc skips it. */
 async function askMissing(spaces: Space[]): Promise<Map<string, string>> {
-	const groups = new Map<string, { field: keyof Secrets; id: string; names: string[]; passphrase: boolean }>();
+	const groups = new Map<string, { field: SecretField; id: string; names: string[]; passphrase: boolean }>();
 	for (const s of spaces) {
-		for (const [field, id] of Object.entries(s.missing ?? {}) as [keyof Secrets, string][]) {
+		for (const [key, id] of Object.entries(s.missing ?? {}) as [keyof Secrets, string][]) {
+			const field = baseField(key);
 			if (field === 'passphrase') continue; // asked right after its key
 			const k = `${field}\0${id}`;
 			const g = groups.get(k) ?? { field, id, names: [], passphrase: false };
-			g.names.push(s.name);
+			if (!g.names.includes(s.name)) g.names.push(s.name);
 			g.passphrase ||= s.missing!.passphrase === id;
 			groups.set(k, g);
 		}

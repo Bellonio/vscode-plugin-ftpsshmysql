@@ -17,9 +17,10 @@ npm run package      # typecheck + production build + vsce package -> .vsix
 Tests only cover the pure modules (`spaces.ts`, `crypto.ts`, `telemetry/collect.ts`, `mysql/sqlgen.ts`). These must not import `vscode`, because the test bundle can't resolve it. Keep any new testable logic in vscode-free modules.
 
 ## Architecture
-- **Data**: a `Space` (`spaces.ts`) groups optional `files` (sftp|ftp, rootPath) and `mysql` (optionally `viaSsh`) configs.
+- **Data**: a `Space` (`spaces.ts`) groups optional `files` (sftp|ftp, rootPath) and a list of `mysql` connections (each with its own `id`, optionally `viaSsh`), plus an optional sidebar folder `group`.
+  - Old spaces/exports with a single `mysql` object are upgraded on read by `normalizeSpace` (connection id `m`); `migrateSecrets` moves the old `mysqlPassword` to `mysqlPassword:m`.
   - Spaces are stored in `globalState` by `Store`.
-  - Credentials are never stored in clear. They live in `space.secrets`, an AES-256-GCM blob (`crypto.ts`) whose key is derived from the master password with scrypt.
+  - Credentials are never stored in clear. They live in `space.secrets`, an AES-256-GCM blob (`crypto.ts`) whose key is derived from the master password with scrypt. MySQL passwords are keyed `mysqlPassword:<connId>`.
   - Vault meta (salt, KDF params, verifier) is in `globalState` under `wsm.vault.meta`.
 - **Master password** (`vault.ts`):
   - It is asked on every connection of a space, by design, and is never cached.
@@ -29,6 +30,7 @@ Tests only cover the pure modules (`spaces.ts`, `crypto.ts`, `telemetry/collect.
   - Decrypted secrets live only in memory, in `Session`, until disconnect. `Sessions.open()` prompts for the password; `Sessions.get()` never does.
   - SSH, SFTP and MySQL connections are lazy promises. Terminal, telemetry and the MySQL tunnel (`forwardOut`) share the single SSH client.
   - Dropped connections reconnect with the in-memory secrets.
+  - After 8h without VS Code activity (focus, editor, tree, SSH terminal input → `Sessions.touch()`) every session is closed.
   - `Session.list()` holds the directory cache and dedupes in-flight requests. The tree and the search read only from it, so refreshing the view does not re-list folders on the server. Call `invalidate(dir)` after mutations; it is recursive.
 - **Remote FS**: `remote/remoteFs.ts` defines `RemoteFs`, implemented by `SftpFs` and `FtpFs`.
   - Remote paths are always POSIX (`path.posix`).
@@ -58,6 +60,6 @@ Tests only cover the pure modules (`spaces.ts`, `crypto.ts`, `telemetry/collect.
   - The space form never receives the private key content or stored secrets. Empty secret fields mean "unchanged".
 
 ## Conventions
-- **Context menus** are driven by `contextValue` strings. Examples: `space[:pinned][:connected]`, `filesRoot:<protocol>`, `folder:<protocol>`, `file:<protocol>`, `db`, `database`, `table`. `package.json` matches them with regexes, so keep the two in sync.
+- **Context menus** are driven by `contextValue` strings. Examples: `group`, `space[:pinned][:connected]`, `filesRoot:<protocol>`, `folder:<protocol>`, `file:<protocol>`, `db`, `database`, `table`. `package.json` matches them with regexes, so keep the two in sync.
 - **Commands** registered with the `cmd()` helper (`extension.ts`) get the node from the menu, or from the tree selection when run from a keybinding.
 - **Intentional shortcuts** are marked with `ponytail:` comments.

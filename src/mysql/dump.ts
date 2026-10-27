@@ -37,9 +37,9 @@ const panels = new Map<string, vscode.WebviewPanel>();
 /** Export page of a database (tables preselected from the clicked node): SQL, CSV or JSON, optionally gzipped. */
 export async function openExport(sessions: Sessions, node: Node) {
 	if (node?.kind !== 'table' && node?.kind !== 'database') return;
-	const { spaceId, database: db } = node;
+	const { spaceId, connId, database: db } = node;
 	const table = node.kind === 'table' ? node.table : undefined;
-	const key = `${spaceId}|${db}`;
+	const key = `${spaceId}|${connId}|${db}`;
 	const existing = panels.get(key);
 	if (existing) {
 		existing.reveal();
@@ -48,7 +48,7 @@ export async function openExport(sessions: Sessions, node: Node) {
 	}
 	const s = await sessions.open(spaceId);
 	if (!s) return;
-	const objects: Obj[] = (await query(await s.getMysql(), `SHOW FULL TABLES FROM ${ident(db)}`)).map(r => ({ name: String(r[0]), view: r[1] === 'VIEW' }));
+	const objects: Obj[] = (await query(await s.getMysql(connId), `SHOW FULL TABLES FROM ${ident(db)}`)).map(r => ({ name: String(r[0]), view: r[1] === 'VIEW' }));
 	const panel = vscode.window.createWebviewPanel('wsm.export', `Esporta: ${db}`, vscode.ViewColumn.Active, { enableScripts: true, retainContextWhenHidden: true });
 	panels.set(key, panel);
 	panel.onDidDispose(() => panels.delete(key));
@@ -66,7 +66,7 @@ export async function openExport(sessions: Sessions, node: Node) {
 			if (typeof opts === 'string') return status(false, opts);
 			const session = await sessions.open(spaceId);
 			// Every path ends with a status message: it is what re-enables the button.
-			status(true, session ? await run(session, db, objects.filter(o => opts.tables.includes(o.name)), opts) : 'Esportazione annullata.');
+			status(true, session ? await run(session, connId, db, objects.filter(o => opts.tables.includes(o.name)), opts) : 'Esportazione annullata.');
 		} catch (e: any) {
 			status(false, e?.sqlMessage ?? e?.message ?? String(e));
 		} finally {
@@ -108,7 +108,7 @@ function sanitize(o: any, objects: Obj[]): Options | string {
  * ponytail: LIMIT/OFFSET blocks on the shared connection, without a consistent snapshot (a transaction would get in the
  * way of grid edits). Fine for small databases; big ones need keyset paging on a dedicated connection.
  */
-async function run(s: Session, db: string, objects: Obj[], o: Options): Promise<string> {
+async function run(s: Session, connId: string, db: string, objects: Obj[], o: Options): Promise<string> {
 	const sql = o.format === 'sql';
 	const one = objects.length === 1 ? objects[0].name : undefined;
 	const gz = o.gzip ? '.gz' : '';
@@ -141,7 +141,7 @@ async function run(s: Session, db: string, objects: Obj[], o: Options): Promise<
 	}
 	const where = o.where ? `\nWHERE ${o.where}` : '';
 	if (where && !await confirmRisky(`SELECT 1 FROM t${where}`)) return 'Esportazione annullata.';
-	const conn = await s.getMysql();
+	const conn = await s.getMysql(connId);
 	let rows = 0;
 	const written: string[] = [];
 	const cancelled = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: 'Esportazione', cancellable: true }, async (progress, token) => {

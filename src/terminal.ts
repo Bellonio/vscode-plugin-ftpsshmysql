@@ -5,7 +5,7 @@ import { Session } from './session';
 import { openShell, shQuote } from './remote/sshClient';
 
 /** Native VSCode terminal over a shell channel of the space's SSH connection (no new login). */
-export function openTerminal(session: Session, cwd?: string) {
+export function openTerminal(session: Session, onInput: () => void, cwd?: string) {
 	const write = new vscode.EventEmitter<string>();
 	const close = new vscode.EventEmitter<number | void>();
 	let stream: ClientChannel | undefined;
@@ -31,6 +31,7 @@ export function openTerminal(session: Session, cwd?: string) {
 			stream?.end();
 		},
 		handleInput(data) {
+			onInput();
 			stream?.write(data);
 		},
 		setDimensions(dim) {

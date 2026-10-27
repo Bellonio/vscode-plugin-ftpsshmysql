@@ -5,11 +5,13 @@ import { connectMysql } from './mysql/mysql';
 import { FtpFs } from './remote/ftpClient';
 import { Entry, RemoteFs, sortEntries } from './remote/remoteFs';
 import { connectSsh, openSftp, SftpFs, SshParams } from './remote/sshClient';
-import { Secrets, Space } from './spaces';
+import { mysqlKey, Secrets, Space } from './spaces';
 import { Store } from './store';
 import { Vault } from './vault';
 
 const HOST_KEYS = 'wsm.hostKeys';
+// ponytail: fixed 8h; becomes a setting when the settings panel exists.
+const IDLE_MS = 8 * 60 * 60 * 1000;
 
 /**
  * An unlocked space: decrypted secrets live only here, in memory, until disconnect.
@@ -25,7 +27,8 @@ export class Session {
 	private loading = new Map<string, Promise<Entry[]>>();
 	private ssh?: Promise<Client>;
 	private fs?: Promise<RemoteFs>;
-	private db?: Promise<Connection>;
+	/** MySQL connections by connection id. */
+	private db = new Map<string, Promise<Connection>>();
 
 	constructor(public space: Space, private secrets: Secrets, private state: vscode.Memento) {}
 
@@ -47,7 +50,7 @@ export class Session {
 				.then(client => {
 					client.on('close', () => {
 						if (this.ssh === p) this.ssh = this.fs = undefined;
-						if (this.space.mysql?.viaSsh) this.db = undefined;
+						for (const m of this.space.mysql ?? []) if (m.viaSsh) this.db.delete(m.id);
 					});
 					return client;
 				}));
@@ -104,20 +107,24 @@ export class Session {
 		}
 	}
 
-	getMysql(): Promise<Connection> {
-		const m = this.space.mysql;
-		if (!m) return Promise.reject(new Error('Questo spazio non ha un database MySQL.'));
-		if (!this.db) {
-			const p = (this.db = (m.viaSsh ? this.getSsh() : Promise.resolve(undefined))
-				.then(ssh => connectMysql(m, this.secrets.mysqlPassword ?? '', ssh))
+	/** MySQL connection `connId`, or the first one of the space when omitted. */
+	getMysql(connId?: string): Promise<Connection> {
+		const m = connId ? this.space.mysql?.find(c => c.id === connId) : this.space.mysql?.[0];
+		if (!m) return Promise.reject(new Error('Connessione MySQL non trovata in questo spazio.'));
+		let p = this.db.get(m.id);
+		if (!p) {
+			const forget = () => { if (this.db.get(m.id) === p) this.db.delete(m.id); };
+			p = (m.viaSsh ? this.getSsh() : Promise.resolve(undefined))
+				.then(ssh => connectMysql(m, this.secrets[mysqlKey(m.id)] ?? '', ssh))
 				.then(conn => {
-					conn.on('error', () => { if (this.db === p) this.db = undefined; });
-					conn.on('end', () => { if (this.db === p) this.db = undefined; });
+					conn.on('error', forget);
+					conn.on('end', forget);
 					return conn;
-				}));
-			p.catch(() => { if (this.db === p) this.db = undefined; });
+				});
+			this.db.set(m.id, p);
+			p.catch(forget);
 		}
-		return this.db;
+		return p;
 	}
 
 	/** Refuse to contact the server with credentials we know are missing: a doomed login only risks a ban. */
@@ -143,9 +150,10 @@ export class Session {
 	dispose() {
 		const swallow = () => undefined;
 		this.fs?.then(fs => fs.close(), swallow);
-		this.db?.then(c => c.destroy(), swallow);
+		for (const p of this.db.values()) p.then(c => c.destroy(), swallow);
 		this.ssh?.then(c => c.end(), swallow);
-		this.fs = this.db = this.ssh = undefined;
+		this.fs = this.ssh = undefined;
+		this.db.clear();
 		this.cache.clear();
 		this.loading.clear();
 		this.secrets = {};
@@ -158,6 +166,13 @@ export class Sessions implements vscode.Disposable {
 	private changed = new vscode.EventEmitter<string>();
 	/** Fires with the space id when it gets connected or disconnected. */
 	readonly onDidChange = this.changed.event;
+	private lastActivity = Date.now();
+	/** Wall clock check, so it also fires right after the PC wakes from sleep. */
+	private idleTimer = setInterval(() => {
+		if (!this.map.size || Date.now() - this.lastActivity < IDLE_MS) return;
+		this.closeAll();
+		vscode.window.showInformationMessage('WebSpace Manager: connessioni chiuse dopo 8 ore di inattività.');
+	}, 5 * 60 * 1000);
 
 	constructor(private store: Store, private vault: Vault, private state: vscode.Memento) {
 		// Keep live sessions in sync with cosmetic changes (pin, order, name); drop sessions of deleted spaces and of spaces
@@ -172,6 +187,11 @@ export class Sessions implements vscode.Disposable {
 		});
 	}
 
+	/** Records user activity in VS Code (see the idle disconnect). */
+	touch() {
+		this.lastActivity = Date.now();
+	}
+
 	get(spaceId: string): Session | undefined {
 		return this.map.get(spaceId);
 	}
@@ -182,6 +202,7 @@ export class Sessions implements vscode.Disposable {
 
 	/** Returns the live session, or unlocks the space asking the master password. */
 	open(spaceId: string): Promise<Session | undefined> {
+		this.touch();
 		const live = this.map.get(spaceId);
 		if (live) return Promise.resolve(live);
 		let p = this.pending.get(spaceId);
@@ -214,6 +235,7 @@ export class Sessions implements vscode.Disposable {
 	}
 
 	dispose() {
+		clearInterval(this.idleTimer);
 		this.closeAll();
 	}
 }

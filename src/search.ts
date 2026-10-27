@@ -17,7 +17,7 @@ export async function search(store: Store, sessions: Sessions, tree: SpacesTree,
 	const visible = new Set(spaces.map(s => s.id));
 	const items: Item[] = spaces.map(s => ({
 		label: `$(vm) ${s.name}`,
-		description: [s.files && `${s.files.user}@${s.files.host}`, s.mysql && `db ${s.mysql.host}`].filter(Boolean).join(' · '),
+		description: [s.files && `${s.files.user}@${s.files.host}`, ...(s.mysql ?? []).map(m => `db ${m.name || m.host}`)].filter(Boolean).join(' · '),
 		target: () => tree.spaceNode(s.id),
 	}));
 	for (const s of sessions.all()) {

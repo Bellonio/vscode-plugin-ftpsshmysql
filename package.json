@@ -90,6 +90,16 @@
         "category": "WSM"
       },
       {
+        "command": "wsm.renameGroup",
+        "title": "Rinomina cartella",
+        "category": "WSM"
+      },
+      {
+        "command": "wsm.removeGroup",
+        "title": "Rimuovi cartella (gli spazi tornano alla radice)",
+        "category": "WSM"
+      },
+      {
         "command": "wsm.disconnect",
         "title": "Disconnetti",
         "category": "WSM",
@@ -369,6 +379,14 @@
           "when": "false"
         },
         {
+          "command": "wsm.renameGroup",
+          "when": "false"
+        },
+        {
+          "command": "wsm.removeGroup",
+          "when": "false"
+        },
+        {
           "command": "wsm.moveUp",
           "when": "false"
         },
@@ -575,6 +593,16 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "wsm.renameGroup",
+          "when": "view == wsm.spaces && viewItem == group",
+          "group": "1_edit@1"
+        },
+        {
+          "command": "wsm.removeGroup",
+          "when": "view == wsm.spaces && viewItem == group",
+          "group": "1_edit@2"
+        },
         {
           "command": "wsm.moveUp",
           "when": "view == wsm.spaces && wsm.manualSort && !wsm.filtered && viewItem =~ /^space/",

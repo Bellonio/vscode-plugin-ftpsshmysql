@@ -60,6 +60,15 @@ export function activate(context: vscode.ExtensionContext) {
 		await store.saveAll(moveSpace(store.all(), n.spaceId, dir));
 		await view.reveal(tree.spaceNode(n.spaceId), { select: true, focus: true });
 	};
+	/** Folder rename (to an existing name merges them) or removal: spaces go back to the root, none is deleted. */
+	const editGroup = (remove: boolean) => async (n: Node) => {
+		if (n.kind !== 'group') return;
+		const name = remove ? undefined : (await vscode.window.showInputBox({
+			title: 'Rinomina cartella', value: n.group, validateInput: v => v.trim() ? undefined : 'Nome obbligatorio',
+		}))?.trim();
+		if (!remove && !name) return;
+		await store.saveAll(store.all().map(s => (s.group === n.group ? { ...s, group: name } : s)));
+	};
 	const setPinned = (pinned: boolean) => async (n: Node) => {
 		const s = n.kind === 'space' && store.get(n.spaceId);
 		if (s) await store.upsert({ ...s, pinned });
@@ -91,6 +100,12 @@ export function activate(context: vscode.ExtensionContext) {
 
 	context.subscriptions.push(
 		view, sessions,
+		// User activity for the idle disconnect (see Sessions).
+		vscode.window.onDidChangeWindowState(e => e.focused && sessions.touch()),
+		vscode.window.onDidChangeActiveTextEditor(() => sessions.touch()),
+		vscode.window.onDidChangeTextEditorSelection(() => sessions.touch()),
+		view.onDidChangeSelection(() => sessions.touch()),
+		view.onDidExpandElement(() => sessions.touch()),
 		vscode.workspace.registerFileSystemProvider('wsm', new WsmFileSystem(sessions, snapshots, history), { isCaseSensitive: true }),
 		// Local snapshots live only while their tab is open.
 		vscode.window.tabGroups.onDidChangeTabs(e => e.closed.length && snapshots.prune(openWsmUris())),
@@ -119,6 +134,8 @@ export function activate(context: vscode.ExtensionContext) {
 		cmd('wsm.moveDown', move('down')),
 		cmd('wsm.moveTop', move('top')),
 		cmd('wsm.moveBottom', move('bottom')),
+		cmd('wsm.renameGroup', editGroup(false)),
+		cmd('wsm.removeGroup', editGroup(true)),
 		cmd('wsm.pin', setPinned(true)),
 		cmd('wsm.unpin', setPinned(false)),
 		run('wsm.search', () => search(store, sessions, tree, view)),
@@ -143,11 +160,11 @@ export function activate(context: vscode.ExtensionContext) {
 		cmd('wsm.copyPath', n => files.copyPath(n)),
 		cmd('wsm.terminalHere', async n => {
 			const s = await sessions.open(n.spaceId);
-			if (s && (n.kind === 'filesRoot' || n.kind === 'entry')) openTerminal(s, n.path);
+			if (s && (n.kind === 'filesRoot' || n.kind === 'entry')) openTerminal(s, () => sessions.touch(), n.path);
 		}),
 		cmd('wsm.openTerminal', async n => {
 			const s = await sessions.open(n.spaceId);
-			if (s) openTerminal(s);
+			if (s) openTerminal(s, () => sessions.touch());
 		}),
 		cmd('wsm.openTelemetry', n => openTelemetry(sessions, state, n.spaceId)),
 

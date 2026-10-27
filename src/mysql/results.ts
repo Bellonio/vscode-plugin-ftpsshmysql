@@ -7,9 +7,9 @@ import type { Connection } from 'mysql2/promise';
 import { ResultSet, runSql } from './mysql';
 import { changesSchema, columnDefinition, GridChanges, gridSql, ident, isReadOnly, riskyStatements, RowSource, rowSql, toCsv, toJson } from './sqlgen';
 
-interface Target { spaceId: string; database?: string }
+interface Target { spaceId: string; connId: string; database?: string }
 /** "Apri dati" state: paged SELECT on one table, with optional WHERE and ORDER BY. */
-interface Browse { spaceId: string; database: string; table: string; offset: number; where: string; order?: { col: string; desc: boolean } }
+interface Browse { spaceId: string; connId: string; database: string; table: string; offset: number; where: string; order?: { col: string; desc: boolean } }
 
 /** SQL documents remember which space/database they run against. */
 const docTargets = new Map<string, Target>();
@@ -24,7 +24,11 @@ const MAX_ROWS = 2000;
 const PAGE = 100;
 let status: vscode.StatusBarItem | undefined;
 
-const titleOf = (store: Store, t: Target) => `${store.get(t.spaceId)?.name ?? ''}${t.database ? ' / ' + t.database : ''}`;
+const titleOf = (store: Store, t: Target) => {
+	const space = store.get(t.spaceId), all = space?.mysql ?? [];
+	const m = all.length > 1 ? all.find(c => c.id === t.connId) : undefined;
+	return `${space?.name ?? ''}${m ? ` (${m.name || m.host})` : ''}${t.database ? ' / ' + t.database : ''}`;
+};
 
 async function openSqlDoc(target: Target, content: string) {
 	const doc = await vscode.workspace.openTextDocument({ language: 'sql', content });
@@ -59,18 +63,20 @@ export async function chooseTarget(store: Store, sessions: Sessions): Promise<Ta
 	const editor = vscode.window.activeTextEditor;
 	if (!editor) return;
 	const space = await vscode.window.showQuickPick(
-		store.all().filter(s => s.mysql).map(s => ({ label: s.name, description: s.mysql!.database || s.mysql!.host, id: s.id })),
+		store.all().flatMap(s => (s.mysql ?? []).map(m => ({
+			label: s.mysql!.length > 1 ? `${s.name} (${m.name || m.host})` : s.name, description: m.database || m.host, id: s.id, m,
+		}))),
 		{ title: 'Su quale spazio eseguire la query?' });
 	if (!space) return;
 	const s = await sessions.open(space.id);
 	if (!s) return;
-	const [rows] = await (await s.getMysql()).query<any[]>({ sql: 'SHOW DATABASES', rowsAsArray: true });
+	const [rows] = await (await s.getMysql(space.m.id)).query<any[]>({ sql: 'SHOW DATABASES', rowsAsArray: true });
 	const dbs = rows.map(r => String(r[0]));
-	const def = store.get(space.id)?.mysql?.database;
+	const def = space.m.database;
 	if (def && dbs.includes(def)) dbs.unshift(...dbs.splice(dbs.indexOf(def), 1));
 	const database = await vscode.window.showQuickPick(dbs, { title: `Database di ${space.label}` });
 	if (!database) return;
-	const target = { spaceId: space.id, database };
+	const target = { spaceId: space.id, connId: space.m.id, database };
 	docTargets.set(editor.document.uri.toString(), target);
 	refreshStatus(store);
 	return target;
@@ -79,7 +85,7 @@ export async function chooseTarget(store: Store, sessions: Sessions): Promise<Ta
 export async function newQuery(node: Node) {
 	if (node?.kind !== 'db' && node?.kind !== 'database') return;
 	const database = node.kind === 'database' ? node.database : undefined;
-	await openSqlDoc({ spaceId: node.spaceId, database }, `-- ${database ?? 'MySQL'}: Ctrl+Enter esegue la selezione (o tutto)\n`);
+	await openSqlDoc({ spaceId: node.spaceId, connId: node.connId, database }, `-- ${database ?? 'MySQL'}: Ctrl+Enter esegue la selezione (o tutto)\n`);
 }
 
 /** Structure commands: an editor pre-filled with the SQL, run by the user with Ctrl+Enter after reviewing it. */
@@ -95,7 +101,7 @@ export async function sqlTemplate(node: Node, what: 'newTable' | 'addColumn' | '
 		dropColumn: `ALTER TABLE ${t}\n\tDROP COLUMN ${ident(name)};\n`,
 		dropIndex: name === 'PRIMARY' ? `ALTER TABLE ${t}\n\tDROP PRIMARY KEY;\n` : `ALTER TABLE ${t}\n\tDROP INDEX ${ident(name)};\n`,
 	}[what];
-	await openSqlDoc({ spaceId: node.spaceId, database: node.database }, `-- ${node.database}: controlla e premi Ctrl+Enter per eseguire\n${sql}`);
+	await openSqlDoc({ spaceId: node.spaceId, connId: node.connId, database: node.database }, `-- ${node.database}: controlla e premi Ctrl+Enter per eseguire\n${sql}`);
 }
 
 /** CHANGE COLUMN with the current definition, so type, NULL, default and name can all be edited in place. */
@@ -103,9 +109,9 @@ export async function editColumn(sessions: Sessions, node: Node) {
 	if (node?.kind !== 'tableInfo' || node.contextValue !== 'column') return;
 	const s = await sessions.open(node.spaceId);
 	if (!s) return;
-	const [rows] = await (await s.getMysql()).query<any[]>({ sql: `SHOW CREATE TABLE ${ident(node.database)}.${ident(node.table)}`, rowsAsArray: true });
+	const [rows] = await (await s.getMysql(node.connId)).query<any[]>({ sql: `SHOW CREATE TABLE ${ident(node.database)}.${ident(node.table)}`, rowsAsArray: true });
 	const def = columnDefinition(String(rows[0][1]), node.text) ?? node.description;
-	await openSqlDoc({ spaceId: node.spaceId, database: node.database },
+	await openSqlDoc({ spaceId: node.spaceId, connId: node.connId, database: node.database },
 		`-- ${node.database}: modifica tipo/default/nome e premi Ctrl+Enter per eseguire\nALTER TABLE ${ident(node.table)}\n\tCHANGE COLUMN ${ident(node.text)} ${ident(node.text)} ${def};\n`);
 }
 
@@ -113,8 +119,8 @@ export async function showCreateTable(sessions: Sessions, node: Node) {
 	if (node?.kind !== 'table') return;
 	const s = await sessions.open(node.spaceId);
 	if (!s) return;
-	const [rows] = await (await s.getMysql()).query<any[]>({ sql: `SHOW CREATE TABLE ${ident(node.database)}.${ident(node.table)}`, rowsAsArray: true });
-	await openSqlDoc({ spaceId: node.spaceId, database: node.database }, `${rows[0][1]};\n`);
+	const [rows] = await (await s.getMysql(node.connId)).query<any[]>({ sql: `SHOW CREATE TABLE ${ident(node.database)}.${ident(node.table)}`, rowsAsArray: true });
+	await openSqlDoc({ spaceId: node.spaceId, connId: node.connId, database: node.database }, `${rows[0][1]};\n`);
 }
 
 /** Destructive commands: the user must type the name to confirm (CREATE DATABASE asks the name instead). True when the statement ran. */
@@ -122,11 +128,11 @@ export async function dangerous(store: Store, sessions: Sessions, node: Node, wh
 	if (what === 'createDatabase') {
 		if (node?.kind !== 'db') return false;
 		const name = (await vscode.window.showInputBox({ title: 'Nuovo database', prompt: 'Nome del database', validateInput: v => v.trim() ? undefined : 'Nome obbligatorio' }))?.trim();
-		return !!name && execute(store, sessions, { spaceId: node.spaceId }, `CREATE DATABASE ${ident(name)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+		return !!name && execute(store, sessions, { spaceId: node.spaceId, connId: node.connId }, `CREATE DATABASE ${ident(name)} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
 	}
 	const target = what === 'dropDatabase'
-		? node?.kind === 'database' && { name: node.database, sql: `DROP DATABASE ${ident(node.database)}` }
-		: node?.kind === 'table' && { name: node.table, sql: `${what === 'truncateTable' ? 'TRUNCATE TABLE' : 'DROP TABLE'} ${ident(node.database)}.${ident(node.table)}` };
+		? node?.kind === 'database' && { name: node.database, connId: node.connId, sql: `DROP DATABASE ${ident(node.database)}` }
+		: node?.kind === 'table' && { name: node.table, connId: node.connId, sql: `${what === 'truncateTable' ? 'TRUNCATE TABLE' : 'DROP TABLE'} ${ident(node.database)}.${ident(node.table)}` };
 	if (!target) return false;
 	const label = { truncateTable: 'Svuota la tabella', dropTable: 'Elimina la tabella', dropDatabase: 'Elimina il database' }[what];
 	const typed = await vscode.window.showInputBox({
@@ -134,7 +140,7 @@ export async function dangerous(store: Store, sessions: Sessions, node: Node, wh
 		prompt: `Scrivi "${target.name}" per confermare`,
 		validateInput: v => v === target.name ? undefined : 'Il nome non corrisponde',
 	});
-	return typed === target.name && execute(store, sessions, { spaceId: node.spaceId }, target.sql);
+	return typed === target.name && execute(store, sessions, { spaceId: node.spaceId, connId: target.connId }, target.sql);
 }
 
 /** Asks before running DROP/TRUNCATE/DELETE or UPDATE without WHERE. */
@@ -156,13 +162,13 @@ export async function runQuery(store: Store, sessions: Sessions, tree: SpacesTre
 	await execute(store, sessions, target, sql);
 	// Even after an error: a multi-statement run may have applied part of the DDL. Expanded children reload with it.
 	// Only while connected: the reload goes through sessions.open() and would ask the password again after a cancel.
-	const db = changesSchema(sql) && sessions.get(target.spaceId) && tree.dbNode(target.spaceId);
+	const db = changesSchema(sql) && sessions.get(target.spaceId) && tree.dbNode(target.spaceId, target.connId);
 	if (db) tree.refresh(db);
 }
 
 export async function openTable(store: Store, sessions: Sessions, node: Node) {
 	if (node?.kind !== 'table') return;
-	browse = { spaceId: node.spaceId, database: node.database, table: node.table, offset: 0, where: '' };
+	browse = { spaceId: node.spaceId, connId: node.connId, database: node.database, table: node.table, offset: 0, where: '' };
 	await runBrowse(store, sessions);
 }
 
@@ -171,7 +177,7 @@ async function runBrowse(store: Store, sessions: Sessions) {
 	const sql = `SELECT * FROM ${ident(b.database)}.${ident(b.table)}${b.where.trim() ? `\nWHERE ${b.where.trim()}` : ''}`
 		+ `${b.order ? `\nORDER BY ${ident(b.order.col)} ${b.order.desc ? 'DESC' : 'ASC'}` : ''}\nLIMIT ${PAGE} OFFSET ${b.offset}`;
 	// The WHERE is typed by the user and the connection allows multiple statements: same check as the editor.
-	return await confirmRisky(sql) && execute(store, sessions, { spaceId: b.spaceId, database: b.database }, sql, true);
+	return await confirmRisky(sql) && execute(store, sessions, { spaceId: b.spaceId, connId: b.connId, database: b.database }, sql, true);
 }
 
 async function execute(store: Store, sessions: Sessions, target: Target, sql: string, browsing = false): Promise<boolean> {
@@ -194,7 +200,7 @@ async function execute(store: Store, sessions: Sessions, target: Target, sql: st
 	const run = last = { id: ++runs, target, sql, sets: [] as ResultSet[], keys: [] as string[][], browsing };
 	const t0 = Date.now();
 	try {
-		const conn = await s.getMysql();
+		const conn = await s.getMysql(target.connId);
 		const sets: ResultSet[] = await runSql(conn, sql, target.database);
 		const ms = Date.now() - t0;
 		run.sets = sets;
@@ -233,7 +239,7 @@ async function rowAction(setIndex: number, rowIndex: number, action: 'update' | 
 	const set = last?.sets[setIndex], row = set?.rows[rowIndex];
 	if (!last || !set?.source || !row) return;
 	const label = { update: 'modifica i valori', insert: 'modifica i valori della copia', delete: 'controlla la riga da eliminare' }[action];
-	await openSqlDoc({ spaceId: last.target.spaceId, database: set.source.db },
+	await openSqlDoc({ spaceId: last.target.spaceId, connId: last.target.connId, database: set.source.db },
 		`-- ${set.source.db}.${set.source.table}: ${label} e premi Ctrl+Enter per eseguire\n${rowSql(action, set.source, row, last.keys[setIndex])}`);
 }
 
@@ -253,7 +259,7 @@ async function applyGrid(store: Store, sessions: Sessions, m: { id: number; set:
 	try {
 		const s = await sessions.open(run.target.spaceId);
 		if (!s) return;
-		const conn = await s.getMysql();
+		const conn = await s.getMysql(run.target.connId);
 		const [[info]] = await conn.query<any[]>('SELECT @@SESSION.sql_mode AS mode, (SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?) AS engine',
 			[set.source.db, set.source.table]);
 		// literal() escapes with backslashes: with this mode they would be taken literally and a quote in the data could end the string.
@@ -266,7 +272,7 @@ async function applyGrid(store: Store, sessions: Sessions, m: { id: number; set:
 				+ (text.length > 2000 ? text.slice(0, 2000) + '\n…' : text),
 		}, 'Applica', "Apri nell'editor");
 		// No START TRANSACTION here: if a statement failed, the transaction would stay open on the shared connection.
-		if (pick === "Apri nell'editor") return openSqlDoc({ spaceId: run.target.spaceId, database: set.source.db }, `-- eseguite in sequenza, senza transazione\n${text}\n`);
+		if (pick === "Apri nell'editor") return openSqlDoc({ spaceId: run.target.spaceId, connId: run.target.connId, database: set.source.db }, `-- eseguite in sequenza, senza transazione\n${text}\n`);
 		if (pick !== 'Applica') return;
 		await conn.beginTransaction();
 		try {
