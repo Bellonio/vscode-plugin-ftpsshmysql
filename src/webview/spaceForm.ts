@@ -149,79 +149,161 @@ async function test(ctx: { vault: Vault; state: vscode.Memento }, old: Space | u
 
 function html(webview: vscode.Webview): string {
 	const css = `
-form { max-width: 680px; }
-fieldset { border: 1px solid var(--vscode-panel-border); border-radius: 4px; margin: 16px 0; padding: 10px 14px 12px; }
-legend { padding: 0 6px; font-weight: 600; }
-label.row { display: grid; grid-template-columns: 150px 1fr; align-items: center; gap: 10px; margin: 6px 0; }
+body { padding: 0 20px; }
+form { max-width: 1240px; }
+.page { padding: 18px 0 4px; }
+.page h1 { font-size: 1.45em; font-weight: 600; margin: 0 0 4px; }
+.page p { margin: 0; }
+h2, h3 { margin: 0; }
+
+/* Label column + control, shared by every field (also inside MySQL connections) so all inputs line up. */
+.field { display: grid; grid-template-columns: 140px minmax(0, 1fr); align-items: center; gap: 4px 12px; margin: 8px 0; }
+.field > label:first-child, .field > .label { color: var(--vscode-foreground); }
+.field .hint { grid-column: 2; font-size: .92em; }
+.inline { display: flex; align-items: center; gap: 12px; }
+.inline input:first-child { flex: 1; min-width: 0; }
+.inline .port { width: 90px; flex: none; }
+.inline label { flex: none; display: flex; align-items: center; gap: 8px; }
+.inline span { min-width: 0; overflow-wrap: anywhere; }
 label.check { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
-input[type=text], input[type=password], input[type=number], select { width: 100%; }
-.hostPort { display: grid; grid-template-columns: 1fr 150px; gap: 10px; }
-.hostPort label.row:last-child { grid-template-columns: auto 1fr; }
+input[type=text], input[type=password], input[type=number], select { width: 100%; min-height: 26px; }
+input[type=checkbox] { margin: 0; accent-color: var(--vscode-focusBorder); }
+button:focus-visible, input[type=checkbox]:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+button.link { background: none; color: var(--vscode-textLink-foreground); padding: 4px 6px; }
+button.link:hover { background: var(--vscode-toolbar-hoverBackground); color: var(--vscode-textLink-activeForeground); }
+
+.general { margin: 14px 0 6px; max-width: 600px; }
+/* Server left, Database right; they stack when the panel is too narrow for two readable columns. */
+.columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(440px, 1fr)); gap: 18px; align-items: start; margin: 18px 0; }
+.columns > .block { margin: 0; }
+
+/* Server and Database: two clearly separate blocks with their own header band. */
+.block { border: 1px solid var(--vscode-contrastBorder, var(--vscode-panel-border)); border-radius: 6px; margin: 18px 0; }
+.blockHead { display: flex; align-items: flex-start; gap: 10px; padding: 10px 14px;
+	background: var(--vscode-sideBarSectionHeader-background, var(--vscode-sideBar-background));
+	border-bottom: 1px solid var(--vscode-contrastBorder, var(--vscode-panel-border)); border-radius: 6px 6px 0 0; }
+.blockHead > div { flex: 1; min-width: 0; }
+.blockHead h2 { font-size: 1.15em; font-weight: 600; line-height: 20px; }
+.blockHead p { margin: 2px 0 0; }
+.blockHead .check { margin: 1px 0 0; white-space: nowrap; }
+.icon { width: 20px; height: 20px; flex: none; fill: none; stroke: var(--vscode-icon-foreground, currentColor); stroke-width: 1.1; }
+.icon .dot { fill: var(--vscode-icon-foreground, currentColor); stroke: none; }
+.blockBody { padding: 4px 14px 12px; }
+.group + .group { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
+.group h3 { font-size: 1em; font-weight: 600; margin: 8px 0 2px; }
+.off { padding: 10px 14px; margin: 0; }
+
+/* MySQL connections: a divided list inside the Database block (no nested cards). */
 #mysqlList { counter-reset: conn; }
-.card { counter-increment: conn; border: 1px solid var(--vscode-panel-border); border-radius: 4px; padding: 8px 12px; margin: 10px 0; background: var(--vscode-sideBar-background, transparent); }
-.cardHead { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-.cardHead .num::before { content: '#' counter(conn); font-weight: 600; }
-.cardHead .num { min-width: 28px; }
-.cardHead button { padding: 4px 10px; }
-#mysqlEmpty { margin: 6px 0; }
-.actions { display: flex; gap: 8px; margin-top: 16px; }
-#status { white-space: pre-wrap; margin-top: 12px; }
-.hidden { display: none !important; }`;
+.conn { counter-increment: conn; padding: 10px 0 6px; }
+.conn + .conn { border-top: 1px solid var(--vscode-widget-border, var(--vscode-panel-border)); }
+.connHead { display: grid; grid-template-columns: 140px minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.connHead .num { font-weight: 600; }
+.connHead .num::before { content: 'Connessione ' counter(conn); }
+#mysqlEmpty, #tunnelNote { margin: 10px 0; }
+.addRow { margin-top: 6px; }
+
+.actions { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 0 14px;
+	background: var(--vscode-editor-background); border-top: 1px solid var(--vscode-contrastBorder, var(--vscode-panel-border)); }
+.actions .note { flex: 1 1 260px; margin: 0; font-size: .92em; }
+#status { flex-basis: 100%; white-space: pre-wrap; margin: 0; }
+#status:empty { display: none; }
+.hidden { display: none !important; }
+
+@media (max-width: 560px) {
+	.columns { grid-template-columns: minmax(0, 1fr); }
+	.field, .connHead { grid-template-columns: minmax(0, 1fr); }
+	.field .hint { grid-column: 1; }
+	.connHead .mRemove { justify-self: start; }
+}`;
 	const body = `
-<h2 id="title">Spazio</h2>
+<header class="page">
+	<h1 id="title">Nuovo spazio</h1>
+	<p class="muted">Uno spazio riunisce l'accesso a un server (file, terminale, telemetria) e i suoi database MySQL.</p>
+</header>
 <form id="f" autocomplete="off">
-<label class="row">Nome <input type="text" id="name" required></label>
-<label class="row">Cartella <input type="text" id="group" list="groups" placeholder="nessuna (scegli o scrivi un nome nuovo)"></label>
-<datalist id="groups"></datalist>
+<div class="general">
+	<div class="field"><label for="name">Nome</label><input type="text" id="name" required></div>
+	<div class="field"><label for="group">Cartella</label><input type="text" id="group" list="groups" placeholder="Nessuna: scegline una o scrivi un nome nuovo"></div>
+	<datalist id="groups"></datalist>
+</div>
 
-<fieldset><legend><label class="check"><input type="checkbox" id="filesOn" checked> Accesso ai file</label></legend>
-<div id="filesBox">
-	<label class="row">Protocollo <select id="protocol"><option value="sftp">SFTP (SSH)</option><option value="ftp">FTP</option></select></label>
-	<div class="hostPort"><label class="row">Host <input type="text" id="host"></label><label class="row">Porta <input type="number" id="port" value="22"></label></div>
-	<label class="row">Utente <input type="text" id="user"></label>
-	<label class="row sftpOnly">Autenticazione <select id="auth"><option value="password">Password</option><option value="key">Chiave privata</option></select></label>
-	<label class="row pwOnly">Password <input type="password" id="filesPassword"></label>
-	<div class="row keyOnly" style="display:grid;grid-template-columns:150px 1fr;gap:10px;align-items:center;margin:6px 0">
-		<span>Chiave privata</span><span><button type="button" class="secondary" id="pickKey">Scegli file chiave...</button> <span id="keyName" class="muted"></span></span>
+<div class="columns">
+<section class="block" aria-labelledby="serverTitle">
+	<div class="blockHead"><svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2.5" width="12" height="4.5" rx="1"/><rect x="2" y="9" width="12" height="4.5" rx="1"/><circle cx="4.75" cy="4.75" r=".6" class="dot"/><circle cx="4.75" cy="11.25" r=".6" class="dot"/></svg>
+		<div><h2 id="serverTitle">Server</h2><p class="muted">Accesso ai file via SFTP o FTP. Con SFTP anche terminale, telemetria e tunnel per i database.</p></div>
+		<label class="check"><input type="checkbox" id="filesOn" checked> Attivo</label>
 	</div>
-	<label class="row keyOnly">Passphrase chiave <input type="password" id="passphrase"></label>
-	<label class="row">Root path <input type="text" id="rootPath" value="/" placeholder="/var/www/html"></label>
-	<label class="check ftpOnly"><input type="checkbox" id="ftps"> FTPS (TLS esplicito)</label>
-	<label class="check ftpOnly ftpsOnly"><input type="checkbox" id="ftpsInsecure"> Accetta certificato non valido (self-signed o intestato al provider)</label>
-	<label class="check"><input type="checkbox" id="showHidden"> Mostra file nascosti</label>
-</div></fieldset>
+	<div id="filesBox" class="blockBody">
+		<div class="group">
+			<h3>Connessione</h3>
+			<div class="field"><label for="protocol">Protocollo</label><select id="protocol"><option value="sftp">SFTP (SSH)</option><option value="ftp">FTP</option></select></div>
+			<div class="field"><label for="host">Host</label><div class="inline"><input type="text" id="host" placeholder="es. server.esempio.it"><label for="port">Porta</label><input type="number" id="port" class="port" value="22"></div></div>
+			<div class="field"><label for="user">Utente</label><input type="text" id="user"></div>
+		</div>
+		<div class="group">
+			<h3>Autenticazione</h3>
+			<div class="field sftpOnly"><label for="auth">Metodo</label><select id="auth"><option value="password">Password</option><option value="key">Chiave privata</option></select></div>
+			<div class="field pwOnly"><label for="filesPassword">Password</label><input type="password" id="filesPassword"></div>
+			<div class="field keyOnly"><span class="label">Chiave privata</span><div class="inline"><button type="button" class="secondary" id="pickKey">Scegli file chiave...</button><span id="keyName" class="muted"></span></div></div>
+			<div class="field keyOnly"><label for="passphrase">Passphrase</label><input type="password" id="passphrase" placeholder="Solo se la chiave è protetta"></div>
+		</div>
+		<div class="group">
+			<h3>Opzioni</h3>
+			<div class="field"><label for="rootPath">Root path</label><input type="text" id="rootPath" value="/" placeholder="/var/www/html"></div>
+			<div class="field ftpOnly"><span></span><label class="check"><input type="checkbox" id="ftps"> FTPS (TLS esplicito)</label></div>
+			<div class="field ftpOnly ftpsOnly"><span></span><label class="check"><input type="checkbox" id="ftpsInsecure"> Accetta certificato non valido (self-signed o intestato al provider)</label></div>
+			<div class="field"><span></span><label class="check"><input type="checkbox" id="showHidden"> Mostra file nascosti</label></div>
+		</div>
+	</div>
+	<p id="filesOff" class="off muted hidden">Nessun accesso al server: lo spazio userà solo connessioni MySQL dirette.</p>
+</section>
 
-<fieldset id="mysqlBox"><legend>Database MySQL</legend>
-	<div id="mysqlList"></div>
-	<p id="mysqlEmpty" class="muted">Nessuna connessione MySQL.</p>
-	<button type="button" class="secondary" id="addMysql">+ Aggiungi connessione MySQL</button>
-</fieldset>
+<section class="block" id="mysqlBox" aria-labelledby="dbTitle">
+	<div class="blockHead"><svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><ellipse cx="8" cy="3.75" rx="5.5" ry="2"/><path d="M2.5 3.75v8.5c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2v-8.5"/><path d="M2.5 8c0 1.1 2.46 2 5.5 2s5.5-.9 5.5-2"/></svg>
+		<div><h2 id="dbTitle">Database MySQL</h2><p class="muted">Una o più connessioni. Col tunnel SSH il database è raggiunto passando dal server qui sopra.</p></div>
+	</div>
+	<div class="blockBody">
+		<div id="mysqlList"></div>
+		<p id="mysqlEmpty" class="muted">Nessuna connessione: aggiungine una se lo spazio usa un database.</p>
+		<p id="tunnelNote" class="muted hidden">Il tunnel SSH è disponibile solo con accesso al server via SFTP: le connessioni qui sotto sono dirette.</p>
+		<div class="addRow"><button type="button" class="link" id="addMysql">+ Aggiungi connessione MySQL</button></div>
+	</div>
+</section>
+</div>
 
-<template id="mysqlTpl"><div class="card">
-	<div class="cardHead"><span class="num"></span><input type="text" class="mName" placeholder="Nome connessione (opzionale, es. produzione)">
-		<button type="button" class="secondary mRemove" title="Rimuovi questa connessione">Rimuovi</button></div>
-	<label class="check sftpOnly"><input type="checkbox" class="mViaSsh" checked> Tramite tunnel SSH dello spazio</label>
-	<div class="hostPort"><label class="row">Host <input type="text" class="mHost" value="127.0.0.1"></label><label class="row">Porta <input type="number" class="mPort" value="3306"></label></div>
-	<label class="row">Utente <input type="text" class="mUser"></label>
-	<label class="row">Password <input type="password" class="mPassword"></label>
-	<label class="row">Database (opzionale) <input type="text" class="mDatabase"></label>
+<template id="mysqlTpl"><div class="conn">
+	<div class="connHead"><span class="num"></span><input type="text" class="mName" aria-label="Nome connessione" placeholder="Nome (opzionale, es. produzione)">
+		<button type="button" class="link mRemove">Rimuovi</button></div>
+	<div class="field sftpOnly"><span></span><label class="check"><input type="checkbox" class="mViaSsh" checked> Tramite tunnel SSH del server</label></div>
+	<div class="field"><span class="label">Host</span><div class="inline"><input type="text" class="mHost" aria-label="Host MySQL" value="127.0.0.1"><label>Porta <input type="number" class="mPort port" value="3306"></label></div>
+		<span class="hint muted tunnelHint">Indirizzo visto dal server: di solito 127.0.0.1</span></div>
+	<div class="field"><span class="label">Utente</span><input type="text" class="mUser" aria-label="Utente MySQL"></div>
+	<div class="field"><span class="label">Password</span><input type="password" class="mPassword" aria-label="Password MySQL"></div>
+	<div class="field"><span class="label">Database</span><input type="text" class="mDatabase" aria-label="Database predefinito" placeholder="Opzionale: mostrato per primo"></div>
 </div></template>
 
-<p class="muted">Le password e la chiave vengono cifrate con la superpassword. In modifica, lascia vuoti i campi segreti per non cambiarli.</p>
-<div class="actions"><button type="submit">Salva</button><button type="button" class="secondary" id="test">Test connessione</button></div>
-<div id="status"></div>
+<div class="actions">
+	<button type="submit">Salva</button><button type="button" class="secondary" id="test">Test connessione</button>
+	<p class="note muted">Password e chiave sono cifrate con la superpassword. In modifica, i campi segreti vuoti restano invariati.</p>
+	<div id="status" role="status"></div>
+</div>
 </form>`;
 	const script = `
 const $ = id => document.getElementById(id);
-const status = (ok, text) => { $('status').textContent = text; $('status').className = ok ? 'muted' : 'error'; };
+const status = (ok, text) => { $('status').textContent = text; $('status').className = ok ? '' : 'error'; };
 let portTouched = false;
 $('port').addEventListener('input', () => portTouched = true);
 
 function sync() {
 	const sftp = $('protocol').value === 'sftp', key = $('auth').value === 'key';
 	$('filesBox').classList.toggle('hidden', !$('filesOn').checked);
+	$('filesOff').classList.toggle('hidden', $('filesOn').checked);
 	const sftpFiles = sftp && $('filesOn').checked;
 	document.querySelectorAll('.sftpOnly').forEach(e => e.classList.toggle('hidden', e.closest('#mysqlBox') ? !sftpFiles : !sftp));
+	// The hint about 127.0.0.1 only makes sense when that connection really goes through the tunnel.
+	document.querySelectorAll('#mysqlList .conn').forEach(c => c.querySelector('.tunnelHint').classList.toggle('hidden', !(sftpFiles && c.querySelector('.mViaSsh').checked)));
+	$('tunnelNote').classList.toggle('hidden', sftpFiles || !$('mysqlList').children.length);
 	document.querySelectorAll('.ftpOnly').forEach(e => e.classList.toggle('hidden', sftp));
 	document.querySelectorAll('.ftpsOnly').forEach(e => e.classList.toggle('hidden', sftp || !$('ftps').checked));
 	document.querySelectorAll('.keyOnly').forEach(e => e.classList.toggle('hidden', !(sftp && key)));
@@ -241,12 +323,19 @@ function addMysql(m, stored) {
 		q('mUser').value = m.user; q('mDatabase').value = m.database ?? '';
 		if (stored) q('mPassword').placeholder = '(invariata se vuoto)';
 	}
-	q('mRemove').addEventListener('click', () => { card.remove(); sync(); });
+	q('mViaSsh').addEventListener('change', sync);
+	q('mRemove').addEventListener('click', () => {
+		// Keep keyboard focus in the section instead of losing it with the removed button.
+		const next = card.nextElementSibling ?? card.previousElementSibling;
+		card.remove();
+		sync();
+		(next?.querySelector('.mName') ?? $('addMysql')).focus();
+	});
 	$('mysqlList').appendChild(card);
 	sync();
 	return card;
 }
-$('addMysql').addEventListener('click', () => addMysql().querySelector('.mUser').focus());
+$('addMysql').addEventListener('click', () => addMysql().querySelector('.mName').focus());
 
 function collect() {
 	const sftp = $('protocol').value === 'sftp', filesOn = $('filesOn').checked;
