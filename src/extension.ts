@@ -160,6 +160,7 @@ export function activate(context: vscode.ExtensionContext) {
 		cmd('wsm.delete', n => files.delete(n)),
 		cmd('wsm.uploadFiles', n => files.uploadPick(n, false)),
 		cmd('wsm.uploadFolder', n => files.uploadPick(n, true)),
+		cmd('wsm.uploadEditor', n => files.uploadEditor(n)),
 		cmd('wsm.download', n => files.download(n)),
 		cmd('wsm.copyPath', n => files.copyPath(n)),
 		cmd('wsm.terminalHere', async n => {

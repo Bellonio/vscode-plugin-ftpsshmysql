@@ -135,6 +135,51 @@ export class FileOps {
 		if (picked?.length) await this.upload(node, picked.map(u => u.fsPath));
 	}
 
+	/**
+	 * Uploads the file in front of the user into the node's directory: the visible editor, or one picked among
+	 * the visible ones in split mode. What is on screen gets uploaded, unsaved changes and untitled buffers included.
+	 */
+	async uploadEditor(node: Node) {
+		const groups = vscode.window.tabGroups;
+		const seen = new Set<string>();
+		const uris = [groups.activeTabGroup, ...groups.all.filter(g => g !== groups.activeTabGroup)]
+			.map(g => g.activeTab?.input)
+			.flatMap(i => i instanceof vscode.TabInputText || i instanceof vscode.TabInputCustom ? [i.uri] : [])
+			.filter(u => !seen.has(u.toString()) && !!seen.add(u.toString()));
+		if (!uris.length) return void vscode.window.showInformationMessage('Nessun file aperto nell\'editor.');
+		const docOf = (u: vscode.Uri) => vscode.workspace.textDocuments.find(d => d.uri.toString() === u.toString());
+		let uri = uris[0];
+		if (uris.length > 1) {
+			const picked = await vscode.window.showQuickPick(uris.map(u => ({
+				label: posix.basename(u.path), uri: u,
+				description: docOf(u)?.isUntitled ? 'non salvato' : u.scheme === 'file' ? u.fsPath : u.toString(true),
+			})), { title: 'Quale file caricare?' });
+			if (!picked) return;
+			uri = picked.uri;
+		}
+		const doc = docOf(uri);
+		const name = doc?.isUntitled ? await askName('Nome del file da caricare', posix.basename(uri.path)) : posix.basename(uri.path);
+		if (!name) return;
+
+		const c = await this.ctx(node);
+		if (!c) return;
+		const dir = this.dirOf(c.node), remote = posix.join(dir, name);
+		// Writing a wsm file over itself would skip the save-time conflict check: that is what Salva is for.
+		if (uri.toString() === fileUri(c.s.space.id, remote).toString()) return void vscode.window.showInformationMessage('È lo stesso file: usa Salva.');
+		const st = await c.fs.stat(remote).catch(e => { if (!(e instanceof NotFoundError)) throw e; });
+		if (st?.type === 'dir') return void vscode.window.showErrorMessage(`Esiste già una cartella con questo nome:\n${remote}`);
+		if (st && !await vscode.window.showWarningMessage(`Esiste già:\n${remote}`, { modal: true }, 'Sovrascrivi')) return;
+		// Saved local files go byte for byte; edited buffers are encoded as UTF-8 (their original encoding may differ).
+		const fromBuffer = !!doc && (doc.isUntitled || doc.isDirty);
+		await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Carico ${remote}...` }, async () => {
+			if (fromBuffer) await c.fs.writeFile(remote, new TextEncoder().encode(doc.getText()));
+			else if (uri.scheme === 'file') await c.fs.upload(uri.fsPath, remote);
+			else await c.fs.writeFile(remote, await vscode.workspace.fs.readFile(uri));
+		});
+		this.refreshDir(c.s, dir);
+		vscode.window.showInformationMessage(`Caricato ${remote}${doc?.isDirty && !doc.isUntitled ? ' (con le modifiche non salvate, in UTF-8)' : ''}.`);
+	}
+
 	/** Recursive upload of local files/folders into the node's directory, asking on conflicts. */
 	async upload(node: Node, localPaths: string[]) {
 		const c = await this.ctx(node);

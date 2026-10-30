@@ -235,6 +235,11 @@
         "category": "WSM"
       },
       {
+        "command": "wsm.uploadEditor",
+        "title": "Carica il file aperto qui",
+        "category": "WSM"
+      },
+      {
         "command": "wsm.download",
         "title": "Scarica...",
         "category": "WSM"
@@ -436,6 +441,10 @@
         },
         {
           "command": "wsm.uploadFolder",
+          "when": "false"
+        },
+        {
+          "command": "wsm.uploadEditor",
           "when": "false"
         },
         {
@@ -684,9 +693,14 @@
           "group": "2_transfer@2"
         },
         {
+          "command": "wsm.uploadEditor",
+          "when": "view == wsm.spaces && viewItem =~ /^(filesRoot|folder|file):/",
+          "group": "2_transfer@3"
+        },
+        {
           "command": "wsm.download",
           "when": "view == wsm.spaces && viewItem =~ /^(folder|file):/",
-          "group": "2_transfer@3"
+          "group": "2_transfer@4"
         },
         {
           "command": "wsm.terminalHere",
