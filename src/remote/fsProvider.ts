@@ -16,6 +16,10 @@ import { Snapshots } from './snapshots';
 export class WsmFileSystem implements vscode.FileSystemProvider {
 	private changed = new vscode.EventEmitter<vscode.FileChangeEvent[]>();
 	readonly onDidChangeFile = this.changed.event;
+	/** Documents being re-read on purpose: stat reports the real remote file. */
+	private reloading = new Set<string>();
+	/** Last remote version (mtime:size) the user was asked to reload, per document. */
+	private asked = new Map<string, string>();
 
 	constructor(private sessions: Sessions, private snapshots: Snapshots, private history: History) {}
 
@@ -56,11 +60,61 @@ export class WsmFileSystem implements vscode.FileSystemProvider {
 		return new vscode.Disposable(() => undefined);
 	}
 
+	/**
+	 * VSCode re-stats an open document when its tab is shown again and silently reloads it when mtime/size changed.
+	 * For a document already open we keep reporting the snapshot (what the editor shows) and ask before reloading.
+	 */
 	stat(uri: vscode.Uri): Promise<vscode.FileStat> {
-		return this.wrap<vscode.FileStat>(uri, false, async (fs, path) => toStat(await fs.stat(path)), async () => {
+		return this.wrap<vscode.FileStat>(uri, false, async (fs, path) => {
+			const st = await fs.stat(path);
+			const key = uri.toString();
+			const open = st.type === 'file' && !this.reloading.has(key) && vscode.workspace.textDocuments.some(d => d.uri.toString() === key);
+			const snap = open ? await this.snapshots.get(uri) : undefined;
+			if (!snap || (snap.mtime === st.mtime && snap.size === st.size)) return toStat(st);
+			void this.askReload(uri, `${st.mtime}:${st.size}`);
+			return { type: vscode.FileType.File, size: snap.size, mtime: snap.mtime, ctime: snap.mtime };
+		}, async () => {
 			const s = await this.offlineSnapshot(uri);
 			return { type: vscode.FileType.File, size: s.size, mtime: s.mtime, ctime: s.mtime };
 		});
+	}
+
+	/**
+	 * Asked once per remote version: dismissing it leaves the editor as is until the server file changes again.
+	 * Dirty documents are skipped: VSCode never reloads them and only stats them to save, where confirmOverwrite asks.
+	 */
+	private async askReload(uri: vscode.Uri, version: string) {
+		const key = uri.toString();
+		const name = uri.path.split('/').pop();
+		const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === key);
+		if (!doc || doc.isDirty || this.asked.get(key) === version) return;
+		this.asked.set(key, version);
+		const ok = await vscode.window.showWarningMessage(
+			`${name} è stato modificato sul server. Ricaricarlo? Il contenuto attuale dell'editor verrà sostituito.`, 'Ricarica');
+		if (!ok) return;
+		// The notification may be clicked much later, after new edits.
+		if (doc.isDirty && !await vscode.window.showWarningMessage(
+			`${name} ha modifiche non salvate che andranno perse. Ricaricarlo comunque?`, { modal: true }, 'Ricarica')) return;
+		await this.reload(uri).catch(e => vscode.window.showErrorMessage(`${name}: ${e?.message ?? e}`));
+	}
+
+	/** Re-reads an open document from the server (no confirmation: callers ask first). */
+	async reload(uri: vscode.Uri) {
+		const key = uri.toString();
+		const doc = vscode.workspace.textDocuments.find(d => d.uri.toString() === key);
+		if (!doc) return;
+		// Explicit action: connect now, or the editor reads would silently get the old snapshot back.
+		await this.resolve(uri, true);
+		const tab = vscode.window.tabGroups.all.flatMap(g => g.tabs)
+			.find(t => t.input instanceof vscode.TabInputText && t.input.uri.toString() === key);
+		this.reloading.add(key);
+		try {
+			// Focus the existing tab (in its own group): the revert command acts on the active editor.
+			await vscode.window.showTextDocument(doc, { viewColumn: tab?.group.viewColumn, preview: tab?.isPreview });
+			await vscode.commands.executeCommand('workbench.action.files.revert');
+		} finally {
+			this.reloading.delete(key);
+		}
 	}
 
 	readDirectory(uri: vscode.Uri): Promise<[string, vscode.FileType][]> {

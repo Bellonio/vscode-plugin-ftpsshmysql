@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { promises as lfs } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, posix } from 'node:path';
+import { WsmFileSystem } from './remote/fsProvider';
 import { History } from './remote/history';
 import { mkdirp, NotFoundError, RemoteFs } from './remote/remoteFs';
 import { Session, Sessions } from './session';
@@ -12,7 +13,7 @@ type DirNode = Extract<Node, { kind: 'filesRoot' | 'entry' }>;
 const MAX_OPEN = 10 * 1024 * 1024;
 
 export class FileOps {
-	constructor(private sessions: Sessions, private tree: SpacesTree, private versions: History) {}
+	constructor(private sessions: Sessions, private tree: SpacesTree, private versions: History, private wsmFs: WsmFileSystem) {}
 
 	private async ctx(node: Node | undefined): Promise<{ s: Session; fs: RemoteFs; node: DirNode } | undefined> {
 		if (!node || (node.kind !== 'filesRoot' && node.kind !== 'entry')) return;
@@ -60,9 +61,8 @@ export class FileOps {
 		}
 		const reload = !doc.isDirty || await vscode.window.showWarningMessage(
 			`${node.entry.name} ha modifiche non salvate. Sovrascriverle con la versione del server?`, { modal: true }, 'Sovrascrivi');
-		// Focus the existing tab (in its own group): the revert command acts on the active editor.
-		await vscode.window.showTextDocument(doc, { viewColumn: tab?.group.viewColumn, preview: tab?.isPreview });
-		if (reload) await vscode.commands.executeCommand('workbench.action.files.revert');
+		if (reload) await this.wsmFs.reload(uri);
+		else await vscode.window.showTextDocument(doc, { viewColumn: tab?.group.viewColumn, preview: tab?.isPreview });
 	}
 
 	/** Opens the OS file manager on the folder of the file's saved versions. */

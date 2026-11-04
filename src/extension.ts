@@ -22,8 +22,9 @@ export function activate(context: vscode.ExtensionContext) {
 	const sessions = new Sessions(store, vault, state);
 	const tree = new SpacesTree(store, sessions);
 	const history = new History(vscode.Uri.joinPath(context.globalStorageUri, 'history').fsPath);
-	const files = new FileOps(sessions, tree, history);
 	const snapshots = new Snapshots(vscode.Uri.joinPath(context.globalStorageUri, 'snapshots'));
+	const wsmFs = new WsmFileSystem(sessions, snapshots, history);
+	const files = new FileOps(sessions, tree, history, wsmFs);
 	const openWsmUris = () => vscode.window.tabGroups.all.flatMap(g => g.tabs)
 		.flatMap(t => t.input instanceof vscode.TabInputText || t.input instanceof vscode.TabInputCustom ? [t.input.uri]
 			: t.input instanceof vscode.TabInputTextDiff ? [t.input.original, t.input.modified] : [])
@@ -110,7 +111,7 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.onDidChangeTextEditorSelection(() => sessions.touch()),
 		view.onDidChangeSelection(() => sessions.touch()),
 		view.onDidExpandElement(() => sessions.touch()),
-		vscode.workspace.registerFileSystemProvider('wsm', new WsmFileSystem(sessions, snapshots, history), { isCaseSensitive: true }),
+		vscode.workspace.registerFileSystemProvider('wsm', wsmFs, { isCaseSensitive: true }),
 		// Local snapshots live only while their tab is open.
 		vscode.window.tabGroups.onDidChangeTabs(e => e.closed.length && snapshots.prune(openWsmUris())),
 		vscode.workspace.onDidChangeConfiguration(e => {
