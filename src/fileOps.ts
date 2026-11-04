@@ -44,7 +44,9 @@ export class FileOps {
 			if (!ok) return;
 		}
 		// Opening from the tree is an explicit action: connect first (reads by the editor never connect on their own).
-		if (!(await this.sessions.open(node.spaceId))) return;
+		const s = await this.sessions.open(node.spaceId);
+		if (!s) return;
+		await s.getFs();
 		const uri = fileUri(node.spaceId, node.path);
 		const key = uri.toString();
 		// VSCode only focuses an already open tab: re-read it, the file may have changed on the server.

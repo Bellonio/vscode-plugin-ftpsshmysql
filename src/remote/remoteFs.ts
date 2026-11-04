@@ -22,6 +22,8 @@ export interface RemoteFs {
 	upload(localPath: string, remotePath: string): Promise<void>;
 	download(remotePath: string, localPath: string): Promise<void>;
 	close(): void;
+	/** False when the next operation would have to log in again. */
+	connected(): boolean;
 }
 
 export class NotFoundError extends Error {
@@ -29,6 +31,9 @@ export class NotFoundError extends Error {
 		super(`Non trovato: ${path}`);
 	}
 }
+
+/** The server refused the credentials: trying again with the same ones only risks a ban. */
+export class AuthError extends Error {}
 
 export function normalize(p: string): string {
 	const n = posix.normalize('/' + p.replace(/\\/g, '/'));

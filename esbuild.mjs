@@ -3,6 +3,8 @@ import { readdirSync } from 'node:fs';
 
 const args = process.argv.slice(2);
 const production = args.includes('--production');
+// cpu-features and sshcrypto are optional native ssh2 add-ons: ssh2 falls back to pure JS.
+const external = ['vscode', 'cpu-features', './crypto/build/Release/sshcrypto.node'];
 
 if (args.includes('--test')) {
 	// Test bundle: one file per test, without vscode (pure modules only).
@@ -13,7 +15,7 @@ if (args.includes('--test')) {
 		platform: 'node',
 		format: 'cjs',
 		target: 'node18',
-		external: ['vscode'],
+		external,
 		logLevel: 'warning',
 	});
 } else {
@@ -24,8 +26,7 @@ if (args.includes('--test')) {
 		platform: 'node',
 		format: 'cjs',
 		target: 'node18',
-		// cpu-features and sshcrypto are optional native ssh2 add-ons: ssh2 falls back to pure JS.
-		external: ['vscode', 'cpu-features', './crypto/build/Release/sshcrypto.node'],
+		external,
 		sourcemap: !production,
 		minify: production,
 		logLevel: 'info',

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { Client, ClientChannel, SFTPWrapper, Stats } from 'ssh2';
-import { Entry, NotFoundError, RemoteFs } from './remoteFs';
+import { AuthError, Entry, NotFoundError, RemoteFs } from './remoteFs';
 
 export interface SshParams {
 	host: string;
@@ -15,20 +15,48 @@ export interface SshParams {
 /** Asked on every connect with the SHA256 fingerprint; return false to abort. */
 export type HostCheck = (fingerprint: string) => Promise<boolean>;
 
-export function connectSsh(p: SshParams, checkHost: HostCheck): Promise<Client> {
+/**
+ * The password goes to the server once per login: through `password` if offered, otherwise `keyboard-interactive`.
+ * ssh2's default handler would try both, and each one counts as a failed attempt for fail2ban.
+ */
+function passwordAuth() {
+	let step = 0;
+	return (methodsLeft: string[] | null): 'none' | 'password' | 'keyboard-interactive' | false => {
+		step++;
+		if (step === 1) return 'none'; // the failure reply lists the methods the server accepts
+		if (step > 2) return false;
+		if (methodsLeft?.includes('password')) return 'password';
+		return methodsLeft?.includes('keyboard-interactive') ? 'keyboard-interactive' : false;
+	};
+}
+
+export function connectSsh(p: SshParams, checkHost: HostCheck, timeoutMs = 15000): Promise<Client> {
 	return new Promise((resolve, reject) => {
 		const client = new Client();
-		let ready = false;
+		let settled = false;
+		// Our own timer instead of ssh2's readyTimeout, which also runs while the user reads the host key prompt.
+		let timer: NodeJS.Timeout | undefined;
+		const startTimer = () => {
+			timer = setTimeout(() => {
+				settled = true;
+				client.destroy();
+				reject(new Error(`Il server SSH non ha risposto entro ${timeoutMs / 1000} secondi.`));
+			}, timeoutMs);
+		};
 		client
-			.on('ready', () => { ready = true; resolve(client); })
+			.on('ready', () => { clearTimeout(timer); settled = true; resolve(client); })
 			.on('error', (err: Error & { level?: string }) => {
-				if (ready) return; // later errors surface through 'close' and the failing operation
+				clearTimeout(timer);
+				if (settled) return; // later errors surface through 'close' and the failing operation
+				settled = true;
 				client.end();
 				reject(err.level === 'client-authentication'
 					// ponytail: no automatic retry on auth failure, to avoid fail2ban bans.
-					? new Error('Autenticazione SSH fallita: controlla utente/password/chiave. Nessun nuovo tentativo automatico.')
+					? new AuthError('Autenticazione SSH fallita: controlla utente/password/chiave. Nessun nuovo tentativo automatico: disconnetti lo spazio per riprovare.')
 					: err);
 			})
+			// ssh2 emits no error when the server hangs up after its banner (typical of a ban): don't wait forever.
+			.on('close', () => { clearTimeout(timer); settled = true; reject(new Error('Il server SSH ha chiuso la connessione prima del login.')); })
 			.on('keyboard-interactive', (_n, _i, _l, prompts, finish) => finish(prompts.map(() => p.password ?? '')))
 			.connect({
 				host: p.host,
@@ -37,15 +65,19 @@ export function connectSsh(p: SshParams, checkHost: HostCheck): Promise<Client> 
 				password: p.password,
 				privateKey: p.privateKey,
 				passphrase: p.passphrase,
-				tryKeyboard: !!p.password,
-				readyTimeout: 15000,
+				tryKeyboard: !!p.password, // only allows the method: passwordAuth() decides whether it gets used
+				authHandler: p.password ? passwordAuth() as any : undefined,
+				readyTimeout: 0,
 				keepaliveInterval: 30000,
 				keepaliveCountMax: 3,
 				hostVerifier: (key: Buffer, verify: (ok: boolean) => void) => {
 					const fp = 'SHA256:' + createHash('sha256').update(key).digest('base64').replace(/=+$/, '');
-					checkHost(fp).then(verify, () => verify(false));
+					// ssh2 calls this again at every rekey of an established connection: the timer must not restart then.
+					clearTimeout(timer);
+					checkHost(fp).then(ok => { if (ok && !settled) startTimer(); verify(ok); }, () => verify(false));
 				},
 			});
+		startTimer();
 	});
 }
 
@@ -145,5 +177,10 @@ export class SftpFs implements RemoteFs {
 	close(): void {
 		this.sftp.end();
 		this.client.end();
+	}
+
+	/** Session forgets this object as soon as the SSH connection or the SFTP channel closes. */
+	connected(): boolean {
+		return true;
 	}
 }

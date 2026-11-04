@@ -1,7 +1,7 @@
 import { posix } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 import { AccessOptions, Client, FileInfo, FileType } from 'basic-ftp';
-import { Entry, NotFoundError, RemoteFs } from './remoteFs';
+import { AuthError, Entry, NotFoundError, RemoteFs } from './remoteFs';
 
 /**
  * basic-ftp allows one command at a time per connection, so every operation goes through a serial queue.
@@ -27,9 +27,13 @@ export class FtpFs implements RemoteFs {
 		} catch (e: any) {
 			this.client.close();
 			// ponytail: 530 = login refused; no automatic retry to avoid bans.
-			if (e?.code === 530) throw (this.authError = new Error('Autenticazione FTP fallita: controlla utente/password. Nessun nuovo tentativo automatico.'));
+			if (e?.code === 530) throw (this.authError = new AuthError('Autenticazione FTP fallita: controlla utente/password. Nessun nuovo tentativo automatico: disconnetti lo spazio per riprovare.'));
 			throw e;
 		}
+	}
+
+	connected(): boolean {
+		return !this.client.closed;
 	}
 
 	private async reconnect() {

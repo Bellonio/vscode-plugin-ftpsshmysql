@@ -14,7 +14,7 @@ node esbuild.mjs --test && node --test out/test/crypto.test.js                  
 node esbuild.mjs --test && node --test --test-name-pattern="moveSpace" "out/test/*.test.js"
 npm run package      # typecheck + production build + vsce package -> .vsix
 ```
-Tests only cover the pure modules (`spaces.ts`, `crypto.ts`, `telemetry/collect.ts`, `mysql/sqlgen.ts`). These must not import `vscode`, because the test bundle can't resolve it. Keep any new testable logic in vscode-free modules.
+Tests only cover the modules without `vscode` (`spaces.ts`, `crypto.ts`, `telemetry/collect.ts`, `mysql/sqlgen.ts`, and `remote/sshClient.ts` against a fake SSH server on loopback). These must not import `vscode`, because the test bundle can't resolve it. Keep any new testable logic in vscode-free modules.
 
 ## Architecture
 - **Data**: a `Space` (`spaces.ts`) groups optional `files` (sftp|ftp, rootPath) and a list of `mysql` connections (each with its own `id`, optionally `viaSsh`), plus an optional sidebar folder `group`.
@@ -39,7 +39,7 @@ Tests only cover the pure modules (`spaces.ts`, `crypto.ts`, `telemetry/collect.
   - Symlinks are deleted as links, never by recursing into their target.
 - **Editors** (`remote/fsProvider.ts`):
   - Files open as `wsm://<spaceId>/<path>`.
-  - Reads never connect. When the space is offline they are served from `remote/snapshots.ts`: plain local copies in globalStorage, pruned when tabs close. This lets restored tabs work without a prompt.
+  - Reads never log in (`Session.liveFs()`). Without a live connection they are served from `remote/snapshots.ts`: plain local copies in globalStorage, pruned when tabs close. This lets restored tabs work without a prompt.
   - Writes connect (prompting for the password) and check the remote mtime/size against the snapshot before overwriting.
   - VSCode re-stats an open document when its tab is shown and would reload it silently. While online, `stat` reports the snapshot for open documents whose remote file changed and, if not dirty, asks "Ricarica" once per remote version (dirty ones are left to `confirmOverwrite` on save); `reload()` re-reads on purpose.
   - Opening a file from the tree (`FileOps.open`) connects first. If the tab is already open, it is reverted so the file is re-read from the server, after a confirmation when it has unsaved changes.
@@ -55,7 +55,11 @@ Tests only cover the pure modules (`spaces.ts`, `crypto.ts`, `telemetry/collect.
   - A single probe `exec` decides the capabilities, cached per space in `wsm.telemetry.caps`. If exec is refused, it never tries on its own again.
   - Each sample is one `exec` on the existing SSH connection, and only runs while the panel is visible.
   - The first error stops polling until "Riprova rilevamento".
-- **Auth failures** are never retried automatically, on SSH or FTP. The aim is to avoid fail2ban bans. `Session.checkCredentials()` refuses to connect at all when the needed secret is missing.
+- **Auth failures** are never retried automatically, on SSH or FTP. The aim is to avoid fail2ban bans.
+  - A refused login is remembered by `Session` (`AuthError`): nothing logs in again until the session is closed (disconnect, or editing the space).
+  - The password is sent once per login (`passwordAuth()` picks `password` or `keyboard-interactive`, never both).
+  - A failed tree fetch is remembered per node (`SpacesTree.failed`): automatic refreshes don't repeat it, only "Aggiorna" or a disconnect do.
+  - `Session.checkCredentials()` refuses to connect at all when the needed secret is missing.
 - **SSH host keys**: trust on first use, with SHA256 fingerprints stored in `wsm.hostKeys`.
 - **Webviews** (`webview/html.ts` `page()`): vanilla HTML/JS with a nonce-based CSP and VSCode theme variables.
   - The space form never receives the private key content or stored secrets. Empty secret fields mean "unchanged".

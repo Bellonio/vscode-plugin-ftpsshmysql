@@ -8,8 +8,8 @@ import { Snapshots } from './snapshots';
  * Remote files as wsm://<spaceId>/<absolute path>: opening reads, saving uploads directly (SFTP and FTP alike),
  * no temp files. Every path is checked to stay inside the space's root path.
  *
- * Reads never connect on their own: when the space isn't connected (e.g. tabs restored after a VSCode restart)
- * they are served from the local snapshot. Only writes (Ctrl+S, create, delete, rename) open the connection and
+ * Reads never connect on their own: when there is no live connection (tabs restored after a VSCode restart, connection
+ * dropped or refused) they are served from the local snapshot. Only writes (Ctrl+S, create, delete, rename) open the connection and
  * ask the master password; before overwriting, the remote file is compared with the snapshot to catch changes
  * made on the server in the meantime.
  */
@@ -29,7 +29,8 @@ export class WsmFileSystem implements vscode.FileSystemProvider {
 		const path = normalize(uri.path);
 		const root = s.space.files?.rootPath || '/';
 		if (!within(root, path)) throw vscode.FileSystemError.NoPermissions(`Fuori dalla root path ${root}`);
-		return { fs: await s.getFs(), path };
+		const fs = connect ? await s.getFs() : await s.liveFs();
+		return fs && { fs, path };
 	}
 
 	private notConnected(uri: vscode.Uri): never {

@@ -130,7 +130,7 @@ export function activate(context: vscode.ExtensionContext) {
 		cmd('wsm.disconnect', n => sessions.close(n.spaceId)),
 		run('wsm.refresh', () => {
 			for (const s of sessions.all()) s.invalidate('/');
-			tree.refresh();
+			tree.retryAll();
 		}),
 		run('wsm.sortAlpha', setSort('alpha')),
 		run('wsm.sortManual', setSort('manual')),

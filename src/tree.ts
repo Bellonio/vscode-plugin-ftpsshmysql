@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { posix } from 'node:path';
-import { Entry, normalize } from './remote/remoteFs';
+import { AuthError, Entry, normalize } from './remote/remoteFs';
 import { Session, Sessions } from './session';
 import { applyFilter, groupNames, MysqlConfig, SortMode, sortSpaces, Space } from './spaces';
 import { Store } from './store';
@@ -47,6 +47,11 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 	private boot = Date.now().toString(36);
 	/** Tree fetches in flight per space (see the connect refresh in the constructor). */
 	private fetching = new Map<string, Set<Promise<Node[]>>>();
+	/**
+	 * Message of the nodes whose fetch failed. VSCode re-fetches expanded nodes at every refresh (connect, pin, sort, filter):
+	 * without this, each of those would be a new login attempt. Only an explicit "Aggiorna" or a disconnect clears it.
+	 */
+	private failed = new Map<string, string>();
 	/** Keys from `filterKeys()` selected with "Filtra" (in memory only). */
 	filter: string[] = [];
 
@@ -74,8 +79,16 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 		});
 	}
 
+	/** With a node it is an explicit action in that space, so its failed fetches (subfolders included) may be tried again. */
 	refresh(node?: Node) {
+		if (node) for (const id of this.failed.keys()) if (this.nodes.get(id)?.spaceId === node.spaceId) this.failed.delete(id);
 		this.changed.fire(node);
+	}
+
+	/** "Aggiorna" on the whole view: failed fetches may be tried again. */
+	retryAll() {
+		this.failed.clear();
+		this.changed.fire(undefined);
 	}
 
 	private node<T extends Node>(n: T): T {
@@ -86,7 +99,11 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 	}
 
 	private dropSpaceNodes(spaceId: string) {
-		for (const [id, n] of this.nodes) if (n.spaceId === spaceId && n.kind !== 'space') this.nodes.delete(id);
+		for (const [id, n] of this.nodes) {
+			if (n.spaceId !== spaceId || n.kind === 'space') continue;
+			this.nodes.delete(id);
+			this.failed.delete(id);
+		}
 	}
 
 	spaceNode(spaceId: string) {
@@ -310,14 +327,19 @@ export class SpacesTree implements vscode.TreeDataProvider<Node> {
 	/** Opens (or reuses) the session and turns errors into a visible message node instead of an empty folder. */
 	private withSession(n: Node, fn: (s: Session) => Promise<Node[]>): Promise<Node[]> {
 		const msg = (text: string) => [this.node({ kind: 'message', id: `${n.id}|msg`, spaceId: n.spaceId, text })];
+		const failed = this.failed.get(n.id);
+		if (failed) return Promise.resolve(msg(failed));
 		const p = (async () => {
 			try {
 				const s = await this.sessions.open(n.spaceId);
 				if (!s) return msg('Superpassword non inserita: usa "Aggiorna" su questo nodo per riprovare');
 				return await fn(s);
 			} catch (e: any) {
-				vscode.window.showErrorMessage(`${this.store.get(n.spaceId)?.name}: ${e?.message ?? e}`);
-				return msg(e?.message ?? String(e));
+				const text = e?.message ?? String(e);
+				vscode.window.showErrorMessage(`${this.store.get(n.spaceId)?.name}: ${text}`);
+				const shown = e instanceof AuthError ? text : `${text} (usa "Aggiorna" per riprovare)`;
+				this.failed.set(n.id, shown);
+				return msg(shown);
 			}
 		})();
 		const set = this.fetching.get(n.spaceId) ?? new Set();

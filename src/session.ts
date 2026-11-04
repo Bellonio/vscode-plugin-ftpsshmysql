@@ -3,7 +3,7 @@ import type { Client } from 'ssh2';
 import type { Connection } from 'mysql2/promise';
 import { connectMysql } from './mysql/mysql';
 import { FtpFs } from './remote/ftpClient';
-import { Entry, RemoteFs, sortEntries } from './remote/remoteFs';
+import { AuthError, Entry, RemoteFs, sortEntries } from './remote/remoteFs';
 import { connectSsh, openSftp, SftpFs, SshParams } from './remote/sshClient';
 import { mysqlKey, Secrets, Space } from './spaces';
 import { Store } from './store';
@@ -29,6 +29,8 @@ export class Session {
 	private fs?: Promise<RemoteFs>;
 	/** MySQL connections by connection id. */
 	private db = new Map<string, Promise<Connection>>();
+	/** Login refused by SSH/FTP: nothing logs in again until the session is closed (disconnect, or the space is edited). */
+	private authFailure?: AuthError;
 
 	constructor(public space: Space, private secrets: Secrets, private state: vscode.Memento) {}
 
@@ -36,9 +38,14 @@ export class Session {
 		return this.space.files?.protocol === 'sftp';
 	}
 
+	private remember(e: unknown) {
+		if (e instanceof AuthError) this.authFailure = e;
+	}
+
 	getSsh(): Promise<Client> {
 		const f = this.space.files;
 		if (!f || f.protocol !== 'sftp') return Promise.reject(new Error('Questo spazio non ha un accesso SSH.'));
+		if (this.authFailure) return Promise.reject(this.authFailure);
 		if (!this.ssh) {
 			const params: SshParams = { host: f.host, port: f.port, user: f.user };
 			if (f.auth === 'key') {
@@ -54,14 +61,26 @@ export class Session {
 					});
 					return client;
 				}));
-			p.catch(() => { if (this.ssh === p) this.ssh = undefined; });
+			p.catch(e => { this.remember(e); if (this.ssh === p) this.ssh = undefined; });
 		}
 		return this.ssh;
+	}
+
+	/** The files connection only if it needs no new login; for what happens without an explicit user action (open tabs). */
+	async liveFs(): Promise<RemoteFs | undefined> {
+		if (!this.fs && !this.ssh) return;
+		try {
+			const fs = await this.getFs(); // with SSH already up this at most reopens the SFTP channel
+			return fs.connected() ? fs : undefined;
+		} catch {
+			return;
+		}
 	}
 
 	getFs(): Promise<RemoteFs> {
 		const f = this.space.files;
 		if (!f) return Promise.reject(new Error('Questo spazio non ha un accesso ai file.'));
+		if (this.authFailure) return Promise.reject(this.authFailure);
 		if (!this.fs) {
 			const p = (this.fs = f.protocol === 'sftp'
 				? this.getSsh().then(async c => {
@@ -75,7 +94,7 @@ export class Session {
 					secure: !!f.ftps,
 					secureOptions: f.ftps && f.ftpsInsecure ? { rejectUnauthorized: false } : undefined,
 				})));
-			p.catch(() => { if (this.fs === p) this.fs = undefined; });
+			p.catch(e => { this.remember(e); if (this.fs === p) this.fs = undefined; });
 		}
 		return this.fs;
 	}
