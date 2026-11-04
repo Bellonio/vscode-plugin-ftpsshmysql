@@ -8,7 +8,9 @@ Credenziali sempre cifrate con una superpassword. Nessuna connessione parte se n
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-supportato-E95420?logo=ubuntu&logoColor=white)
 ![Protocolli](https://img.shields.io/badge/SFTP%20%C2%B7%20FTP(S)%20%C2%B7%20SSH%20%C2%B7%20MySQL-informational)
 
-![Panoramica di WebSpace Manager](docs/media/overview.gif)
+[![Utilizzo di WebSpace Manager](docs/media/utilizzo.gif)](docs/media/utilizzo.gif)
+
+*Clicca sull'animazione per vederla a dimensione piena.*
 
 ---
 
@@ -54,7 +56,9 @@ Funziona su **Windows e Ubuntu** senza installare nulla sul sistema: niente clie
    ```
 3. Nella barra delle attività a sinistra compare l'icona di **WebSpace Manager**.
 
-![Installazione da VSIX](docs/media/install.gif)
+Lo stesso comando si trova anche nella palette dei comandi (`Ctrl+Shift+P`), cercando **Install from VSIX**:
+
+[![Installazione da VSIX](docs/media/installazione.gif)](docs/media/installazione.gif)
 
 ### Dai sorgenti
 ```
@@ -75,10 +79,8 @@ Poi installa il `.vsix` come sopra.
 2. **Aggiungi uno spazio** con il pulsante **+** nella barra della vista. Il form ha due blocchi affiancati:
    - **Server**: host, porta, utente, protocollo (SFTP/FTP/FTPS), root path, password o chiave privata.
    - **Database**: una o più connessioni MySQL, ognuna diretta o tramite SSH.
-
-   ![Form di uno spazio](docs/media/space-form.png)
-3. **Connettiti** espandendo **File** o **DB**. Solo in quel momento viene chiesta la superpassword.
-4. **Lavora**: apri file, salva con `Ctrl+S`, apri il terminale o la telemetria dal menu contestuale dello spazio.
+3. **Connettiti** espandendo **File** o **DB**; se lo spazio ha solo i file, basta aprire lo spazio. Solo in quel momento viene chiesta la superpassword.
+4. **Lavora**: opera su file e cartelle dalla sidebar di VSCode esattamente come se fossero nel tuo Filesystem.
 5. **Disconnetti** dal menu dello spazio quando hai finito. Dopo 8 ore senza attività in VS Code tutti gli spazi si disconnettono da soli.
 
 ---
@@ -86,29 +88,23 @@ Poi installa il `.vsix` come sopra.
 ## Funzioni nel dettaglio
 
 ### Sidebar e organizzazione
-- **Un click non connette mai.** Selezionare uno spazio o una cartella non apre connessioni: ci si collega solo espandendo "File"/"DB" o aprendo terminale e telemetria.
-- **Cartelle**: assegna una cartella a uno spazio dal form. Le cartelle si rinominano o si rimuovono dal menu contestuale (gli spazi tornano alla radice).
+- **Connessioni solo quando servono.** Aprire una cartella non apre connessioni. Ci si collega espandendo "File"/"DB", aprendo terminale o telemetria, oppure aprendo uno spazio senza MySQL: lì "File" è già espanso, quindi la connessione parte subito.
+- **Organizzazione a cartelle**: assegna una cartella a uno spazio. Le cartelle si rinominano o si rimuovono dal menu contestuale (gli spazi tornano alla radice non vengono eliminati).
 - **Ordinamento**: il pulsante nella barra alterna **A-Z** e **manuale**. In manuale si spostano gli spazi con `Alt+↑`/`Alt+↓` o con "Sposta in cima/in fondo". **Fissa in cima** funziona in entrambe le modalità.
 - **Filtra** (icona imbuto): mostra solo gli spazi di un server, di un tipo (SFTP, FTP, MySQL...) o di una cartella. Il filtro attivo compare accanto al titolo della vista.
-- **Cerca** (`Ctrl+Alt+F`): trova cartelle, spazi e file **già caricati** nell'albero. Non interroga mai il server.
-
-![Cartelle, filtro e ricerca](docs/media/sidebar.gif)
+- **Cerca** (`Ctrl+Alt+F`): trova cartelle, spazi web e file **già caricati** nell'albero. Non interroga mai il server.
 
 ### File remoti
 - **Apri e salva** direttamente sul server.
 - Dal menu contestuale:
   - nuovo file o cartella;
-  - rinomina (`F2`) ed elimina (`Canc`, con conferma);
   - carica file o cartelle, scarica;
   - copia il path remoto;
-  - apri un terminale SSH già in quella cartella.
-- **Upload drag & drop**: trascina file o cartelle da Esplora risorse (o dall'Explorer di VS Code) su una cartella remota. I nodi remoti non sono trascinabili, così non sposti mai una cartella per sbaglio.
+  - apri un terminale SSH nella cartella cliccata.
+- **Upload drag & drop**: trascina file o cartelle da Esplora risorse su una cartella remota. **I nodi remoti non sono trascinabili, così non sposti mai una cartella per sbaglio**.
 - **Protezione dalle sovrascritture**: se il file è cambiato sul server dopo che l'hai aperto, al salvataggio ti viene chiesto se sovrascrivere. Se lo hai aperto senza modifiche e cambia online, compare un avviso **Ricarica**.
 - **Schede ripristinate offline**: alla riapertura di VS Code i file remoti restano aperti e modificabili **senza connettersi**. La connessione parte solo quando salvi.
-- **Versioni precedenti**: ogni lettura dal server salva una copia locale (file sotto 1 MB, al massimo 50 versioni per file). L'icona orologio sul file apre la cartella delle versioni.
-- **FTPS con certificato self-signed**: l'opzione "Accetta certificato non valido" nel form.
-
-![Modifica e salvataggio di un file remoto](docs/media/files.gif)
+- **Versioni precedenti**: ogni lettura dal server salva una copia locale (file sotto 1 MB, al massimo 50 versioni per file). Tramite l'icona orologio sul file nella sidebar si apre la cartella locale del FileSystem con lo storico delle versioni.
 
 ### Terminale SSH
 - **Apri terminale SSH** dal menu dello spazio, oppure **Apri terminale qui** su una cartella.
@@ -127,17 +123,8 @@ Poi installa il `.vsix` come sopra.
   Le operazioni distruttive chiedono sempre conferma.
 - **Tunnel SSH**: per i database raggiungibili solo dal server, spunta "via SSH" nella connessione.
 
-![Query MySQL](docs/media/mysql.gif)
-
 ### Telemetria
 - CPU, RAM, load average, uptime, dischi e quota, processi principali, stato di MySQL.
-- Pensata per **non farti bannare**:
-  - esegue un solo comando di rilevamento;
-  - se il server non permette di eseguire comandi (account solo SFTP, shell limitata) lo dice subito e non ci riprova;
-  - ogni campionamento è un solo comando sulla connessione SSH già aperta, e gira solo con il pannello visibile;
-  - al primo errore si ferma finché non premi "Riprova rilevamento".
-
-![Telemetria del server](docs/media/telemetry.png)
 
 ### Export e import
 Dal menu **`...`** della vista:
@@ -153,11 +140,8 @@ Dal menu **`...`** della vista:
 | Tasti | Azione | Dove |
 |---|---|---|
 | `Ctrl+Alt+F` (`Cmd+Alt+F` su macOS) | Cerca spazi, cartelle e file caricati | Ovunque |
-| `F2` | Rinomina file o cartella remota | Sidebar |
-| `Canc` | Elimina file o cartella remota (con conferma) | Sidebar |
 | `Alt+↑` / `Alt+↓` | Sposta lo spazio su/giù | Sidebar, ordinamento manuale, senza filtro |
 | `Ctrl+Enter` (`Cmd+Enter`) | Esegui la query | Editor SQL |
-| `Ctrl+S` | Salva il file sul server | Editor di un file remoto |
 
 Le scorciatoie si possono cambiare da **File > Preferenze > Scelte rapide da tastiera** cercando `wsm.`.
 
@@ -192,7 +176,7 @@ Le scorciatoie si possono cambiare da **File > Preferenze > Scelte rapide da tas
 È voluto: non viene mai salvata, nemmeno in memoria tra una connessione e l'altra. Una volta connesso, lo spazio resta sbloccato fino alla disconnessione (o a 8 ore di inattività).
 
 **Ho aperto VS Code e i file remoti sono ancora nelle schede: si è connesso da solo?**
-No. Le schede mostrano una copia locale; la connessione parte solo se salvi o se espandi "File".
+No. Le schede mostrano una copia locale; la connessione parte solo se salvi, se espandi "File" o se apri uno spazio senza MySQL.
 
 **La telemetria dice che il server non permette comandi.**
 L'account è solo SFTP o ha una shell limitata. File e MySQL funzionano lo stesso.
